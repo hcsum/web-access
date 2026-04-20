@@ -6,13 +6,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const DEFAULT_DEDICATED_PROFILE_DIR = path.join(os.homedir(), '.web-access', 'chromium-dedicated-profile');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PREFERENCE_FILE = process.env.BROWSER_MODE_PREFERENCE_FILE || path.join(ROOT, '.browser-mode-preference.json');
 
 function parseArgs(argv) {
   const options = {
-    dedicatedProfileDir: process.env.DEDICATED_PROFILE_DIR || DEFAULT_DEDICATED_PROFILE_DIR,
+    dedicatedProfileDir: process.env.DEDICATED_PROFILE_DIR || null,
     json: false,
   };
 
@@ -94,8 +93,6 @@ async function detectFromFiles(files) {
 }
 
 async function main() {
-  const primary = await detectFromFiles(getPrimaryActivePortFiles());
-  const dedicated = await detectFromFiles([path.join(OPTIONS.dedicatedProfileDir, 'DevToolsActivePort')]);
   let preference = null;
   try {
     if (fs.existsSync(PREFERENCE_FILE)) {
@@ -103,11 +100,17 @@ async function main() {
     }
   } catch {}
 
+  const dedicatedProfileDir = OPTIONS.dedicatedProfileDir || preference?.preferredDedicatedProfileDir || null;
+  const primary = await detectFromFiles(getPrimaryActivePortFiles());
+  const dedicated = dedicatedProfileDir
+    ? await detectFromFiles([path.join(dedicatedProfileDir, 'DevToolsActivePort')])
+    : { available: false, port: null, filePath: null, wsPath: null, missingProfileDir: true };
+
   const result = {
     primary,
     dedicated: {
       ...dedicated,
-      profileDir: OPTIONS.dedicatedProfileDir,
+      profileDir: dedicatedProfileDir,
     },
     preference,
   };
@@ -124,9 +127,11 @@ async function main() {
   }
 
   if (dedicated.available) {
-    console.log(`dedicated: ready (port ${dedicated.port}, profile ${OPTIONS.dedicatedProfileDir})`);
+    console.log(`dedicated: ready (port ${dedicated.port}, profile ${dedicatedProfileDir})`);
+  } else if (dedicated.missingProfileDir) {
+    console.log('dedicated: not ready (missing profile dir)');
   } else {
-    console.log(`dedicated: not ready (profile ${OPTIONS.dedicatedProfileDir})`);
+    console.log(`dedicated: not ready (profile ${dedicatedProfileDir})`);
   }
 
   if (preference?.preferredBrowserMode) {

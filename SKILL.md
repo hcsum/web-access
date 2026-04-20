@@ -24,6 +24,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/detect-browser-setup.mjs"
 
 - `primary: ready` 表示主力浏览器当前可连
 - `dedicated: ready` 表示给定专用 profile 当前可连
+- `dedicated: not ready (missing profile dir)` 表示尚未记录专用 profile 路径，此时应直接视为专用浏览器不可用
 - `preference: primary|dedicated` 表示已记录的默认浏览器模式
 - `preference: not set` 表示尚未记录默认浏览器模式
 
@@ -110,7 +111,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks
 
 在需要浏览器操作、而用户尚未说明要用哪种浏览器模式时，让用户选择：`主力浏览器` 还是 `专用浏览器`。
 
-### 向用户说明的选择项
+### 向用户说明的选择项，必须包含以下内容：
 
 1. **主力浏览器**
   - 好处：直接复用现有登录态、书签、插件，不需要重新登录常用网站
@@ -148,14 +149,15 @@ node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks
 - 对 **主力浏览器**：`detect-browser-setup.mjs` 显示 `primary: ready`，说明当前主力浏览器已可连
 - 对 **专用浏览器**：只有在已知专用 profile 路径的前提下，`detect-browser-setup.mjs --dedicated-profile-dir "<profile>"` 显示 `dedicated: ready`，才算当前专用浏览器已就绪
 - 默认偏好保存在 skill 根目录下的 `.browser-mode-preference.json`
+- 如果偏好文件里没有 `preferredDedicatedProfileDir`，就直接视为专用浏览器当前不可用，不要再猜默认专用 profile 路径
 - 如果两种模式都可用，且默认偏好存在，就优先使用默认模式；默认偏好为空时才询问用户
 
-判断当前运行环境，给出对应平台以及浏览器的启动命令示例，以 Chrome跟MacOS为例：
+判断当前运行环境，给出对应平台以及浏览器的启动命令示例，以MacOS为例：
 
 ```bash
-open -na "Google Chrome" --args \
+open -na "<浏览器名>" --args \
   --remote-debugging-port=9333 \
-  --user-data-dir="$HOME/.web-access/chrome-dedicated-profile"
+  --user-data-dir="$HOME/.web-access/<浏览器名>-dedicated-profile"
 ```
 
 ## 浏览器 CDP 模式
