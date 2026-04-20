@@ -11,6 +11,8 @@ import os from 'node:os';
 import net from 'node:net';
 
 const PORT = parseInt(process.env.CDP_PROXY_PORT || '3456');
+const BROWSER_MODE = process.env.BROWSER_MODE || 'primary';
+const DEDICATED_PROFILE_DIR = process.env.DEDICATED_PROFILE_DIR || path.join(os.homedir(), '.web-access', 'chromium-dedicated-profile');
 let ws = null;
 let cmdId = 0;
 const pending = new Map(); // id -> {resolve, timer}
@@ -33,30 +35,49 @@ if (typeof globalThis.WebSocket !== 'undefined') {
 }
 
 // --- 自动发现 Chrome 调试端口 ---
-async function discoverChromePort() {
+async function discoverChromePort(mode = 'primary') {
   // 1. 尝试读 DevToolsActivePort 文件
   const possiblePaths = [];
   const platform = os.platform();
 
   if (platform === 'darwin') {
     const home = os.homedir();
-    possiblePaths.push(
-      path.join(home, 'Library/Application Support/Google/Chrome/DevToolsActivePort'),
-      path.join(home, 'Library/Application Support/Google/Chrome Canary/DevToolsActivePort'),
-      path.join(home, 'Library/Application Support/Chromium/DevToolsActivePort'),
-    );
+    if (mode === 'primary') {
+      possiblePaths.push(
+        path.join(home, 'Library/Application Support/Google/Chrome/DevToolsActivePort'),
+        path.join(home, 'Library/Application Support/Google/Chrome Canary/DevToolsActivePort'),
+        path.join(home, 'Library/Application Support/Chromium/DevToolsActivePort'),
+        path.join(home, 'Library/Application Support/BraveSoftware/Brave-Browser/DevToolsActivePort'),
+        path.join(home, 'Library/Application Support/Microsoft Edge/DevToolsActivePort'),
+        path.join(home, 'Library/Application Support/Arc/User Data/DevToolsActivePort'),
+      );
+    } else {
+      possiblePaths.push(path.join(DEDICATED_PROFILE_DIR, 'DevToolsActivePort'));
+    }
   } else if (platform === 'linux') {
     const home = os.homedir();
-    possiblePaths.push(
-      path.join(home, '.config/google-chrome/DevToolsActivePort'),
-      path.join(home, '.config/chromium/DevToolsActivePort'),
-    );
+    if (mode === 'primary') {
+      possiblePaths.push(
+        path.join(home, '.config/google-chrome/DevToolsActivePort'),
+        path.join(home, '.config/chromium/DevToolsActivePort'),
+        path.join(home, '.config/BraveSoftware/Brave-Browser/DevToolsActivePort'),
+        path.join(home, '.config/microsoft-edge/DevToolsActivePort'),
+      );
+    } else {
+      possiblePaths.push(path.join(DEDICATED_PROFILE_DIR, 'DevToolsActivePort'));
+    }
   } else if (platform === 'win32') {
     const localAppData = process.env.LOCALAPPDATA || '';
-    possiblePaths.push(
-      path.join(localAppData, 'Google/Chrome/User Data/DevToolsActivePort'),
-      path.join(localAppData, 'Chromium/User Data/DevToolsActivePort'),
-    );
+    if (mode === 'primary') {
+      possiblePaths.push(
+        path.join(localAppData, 'Google/Chrome/User Data/DevToolsActivePort'),
+        path.join(localAppData, 'Chromium/User Data/DevToolsActivePort'),
+        path.join(localAppData, 'BraveSoftware/Brave-Browser/User Data/DevToolsActivePort'),
+        path.join(localAppData, 'Microsoft/Edge/User Data/DevToolsActivePort'),
+      );
+    } else {
+      possiblePaths.push(path.join(DEDICATED_PROFILE_DIR, 'DevToolsActivePort'));
+    }
   }
 
   for (const p of possiblePaths) {
@@ -111,22 +132,50 @@ let chromePort = null;
 let chromeWsPath = null;
 
 let connectingPromise = null;
+
+async function fetchBrowserWebSocketUrl(port) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) return null;
+
+    const payload = await response.json();
+    const wsUrl = payload?.webSocketDebuggerUrl;
+    if (typeof wsUrl !== 'string') return null;
+
+    const url = new URL(wsUrl);
+    if (url.protocol !== 'ws:' || url.hostname !== '127.0.0.1') return null;
+
+    return {
+      url: wsUrl,
+      wsPath: `${url.pathname}${url.search}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function connect() {
   if (ws && (ws.readyState === WS.OPEN || ws.readyState === 1)) return;
   if (connectingPromise) return connectingPromise;  // 复用进行中的连接
 
   if (!chromePort) {
-    const discovered = await discoverChromePort();
+    const discovered = await discoverChromePort(BROWSER_MODE);
     if (!discovered) {
       throw new Error(
-        'Chrome 未开启远程调试端口。请用以下方式启动 Chrome：\n' +
-        '  macOS: /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222\n' +
-        '  Linux: google-chrome --remote-debugging-port=9222\n' +
-        '  或在 chrome://flags 中搜索 "remote debugging" 并启用'
+        BROWSER_MODE === 'primary'
+          ? '主力浏览器未开启远程调试。请先在 Chromium 浏览器中开启 remote debugging。'
+          : `专用浏览器未开启远程调试。请先启动使用该 profile 的浏览器：${DEDICATED_PROFILE_DIR}`
       );
     }
     chromePort = discovered.port;
     chromeWsPath = discovered.wsPath;
+  }
+
+  const liveBrowserWs = await fetchBrowserWebSocketUrl(chromePort);
+  if (liveBrowserWs) {
+    chromeWsPath = liveBrowserWs.wsPath;
   }
 
   const wsUrl = getWebSocketUrl(chromePort, chromeWsPath);
@@ -296,7 +345,7 @@ const server = http.createServer(async (req, res) => {
     // /health 不需要连接 Chrome
     if (pathname === '/health') {
       const connected = ws && (ws.readyState === WS.OPEN || ws.readyState === 1);
-      res.end(JSON.stringify({ status: 'ok', connected, sessions: sessions.size, chromePort }));
+      res.end(JSON.stringify({ status: 'ok', connected, browserMode: BROWSER_MODE, sessions: sessions.size, chromePort }));
       return;
     }
 

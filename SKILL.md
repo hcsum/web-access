@@ -22,7 +22,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
 
 未通过时引导用户完成设置：
 - **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
-- **Chrome remote-debugging**：在 Chrome 地址栏打开 `chrome://inspect/#remote-debugging`，勾选 **"Allow remote debugging for this browser instance"** 即可，可能需要重启浏览器。
+- 见浏览器模式引导部分，选择主力浏览器或专用浏览器，并按照提示操作。
 
 检查通过后并必须在回复中向用户直接展示以下须知，再启动 CDP Proxy 执行操作：
 
@@ -89,9 +89,54 @@ node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks
 
 **站点内交互产生的链接是可靠的**：通过用户视角中的可交互单元（卡片、条目、按钮）进行的站点内交互，自然到达的 URL 天然携带平台所需的完整上下文。而手动构造的 URL 可能缺失隐式必要参数，导致被拦截、返回错误页面、甚至触发反爬。
 
+## 浏览器模式引导
+
+在需要浏览器操作、而用户尚未说明要用哪种浏览器模式时，让用户选择：`主力浏览器` 还是 `专用浏览器`。
+
+### 向用户说明的选择项
+
+1. **主力浏览器**
+  - 好处：直接复用现有登录态、书签、插件，不需要重新登录常用网站
+  - 代价：可能偶尔需要处理远程调试授权弹窗；Agent 操作和用户自己的浏览器操作不隔离
+  - 适合：用户在电脑前，希望快速开始，且优先复用已有浏览器环境
+2. **专用浏览器**
+  - 好处：更适合无人值守操作；不需要偶尔处理远程调试授权弹窗；Agent 操作和用户自己的浏览器操作隔离；可指定 Chrome 以外的 Chromium 浏览器（如 Brave）
+  - 代价：第一次需要在专用 profile 中重新登录常用网站、安装常用插件；这些状态会保存在专用 profile 中，不会自动复用主力浏览器的现有状态
+  - 适合：用户不在电脑前、需要长时间自动化操作，或希望把 Agent 和自己的浏览器环境隔离
+
+### 用户选择后的后续操作
+
+- 如果用户选择 **主力浏览器**：
+  - 让用户在 Chromium 浏览器地址栏打开 `chrome://inspect/#remote-debugging`
+  - 勾选 **"Allow remote debugging for this browser instance"**
+  - 然后继续运行 `node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser primary`
+- 如果用户选择 **专用浏览器**：
+  - 先询问用户希望使用哪个浏览器，不要直接假设。优先提供以下选项，并附带一个自由输入项：
+    - `Google Chrome`
+    - `Google Chrome Canary`
+    - `Chromium`
+    - `Brave Browser`
+    - `Microsoft Edge`
+    - `Arc`
+    - `自由输入`
+  - 拿到结果后，不要替用户执行启动命令。直接返回该浏览器的启动命令，让用户自己运行。
+  - 用户运行后，继续使用 `node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --dedicated-profile-dir "<同一个 profile 目录>"`
+
+命令格式统一为：
+
+```bash
+open -na "<浏览器名>" --args \
+  --remote-debugging-port=9333 \
+  --user-data-dir="$HOME/.web-access/<profile-name>"
+```
+
 ## 浏览器 CDP 模式
 
-通过 CDP Proxy 直连用户日常 Chrome，天然携带登录态，无需启动独立浏览器。
+通过 CDP Proxy 连接浏览器，支持两种模式：
+
+- **主力浏览器**：连接平时主要使用的浏览器会话，天然携带现有登录态。
+- **专用浏览器**：连接一个使用独立 `user-data-dir` 启动的 Chromium 浏览器实例，和用户自己的浏览器操作隔离。
+
 若无用户明确要求，不主动操作用户已有 tab，所有操作都在自己创建的后台 tab 中进行，保持对用户环境的最小侵入。不关闭用户 tab 的前提下，完成任务后关闭自己创建的 tab，保持环境整洁。
 
 ### 启动
@@ -100,7 +145,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks
 node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
 ```
 
-脚本会依次检查 Node.js、Chrome 端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。
+脚本会依次检查 Node.js、浏览器调试端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。
 
 ### Proxy API
 
@@ -170,14 +215,14 @@ curl -s "http://localhost:3456/close?target=ID"
 
 ### 登录判断
 
-用户日常 Chrome 天然携带登录态，大多数常用网站已登录。
+主力浏览器通常天然携带现有登录态，大多数常用网站已登录。专用浏览器则需要用户在对应 profile 中单独完成一次登录。
 
 登录判断的核心问题只有一个：**目标内容拿到了吗？**
 
 打开页面后先尝试获取目标内容。只有当确认**目标内容无法获取**且判断登录能解决时，才告知用户：
 > "当前页面在未登录状态下无法获取[具体内容]，请在你的 Chrome 中登录 [网站名]，完成后告诉我继续。"
 
-登录完成后无需重启任何东西，直接刷新页面继续。
+登录完成后无需重启任何东西，直接刷新页面继续。若使用专用浏览器，后续同一 profile 会保留该登录态。
 
 ### 任务结束
 
@@ -193,7 +238,7 @@ Proxy 持续运行，不建议主动停止——重启后需要在 Chrome 中重
 - **速度**：多子 Agent 并行，总耗时约等于单个子任务时长
 - **上下文保护**：抓取内容不进入主 Agent 上下文，主 Agent 只接收摘要，节省 token
 
-**并行 CDP 操作**：每个子 Agent 在当前用户浏览器实例中，自行创建所需的后台 tab（`/new`），自行操作，任务结束自行关闭（`/close`）。所有子 Agent 共享一个 Chrome、一个 Proxy，通过不同 targetId 操作不同 tab，无竞态风险。
+**并行 CDP 操作**：每个子 Agent 在当前浏览器实例中，自行创建所需的后台 tab（`/new`），自行操作，任务结束自行关闭（`/close`）。所有子 Agent 共享一个 Chromium 浏览器实例和一个 Proxy，通过不同 targetId 操作不同 tab，无竞态风险。
 
 **子 Agent Prompt 写法：目标导向，而非步骤指令**
 - 必须在子 Agent prompt 中写 `必须加载 web-access skill 并遵循指引` ，子 Agent 会自动加载 skill，无需在 prompt 中复制 skill 内容或指定路径。

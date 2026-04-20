@@ -36,7 +36,7 @@ AI Agent 原本的联网能力（WebSearch、WebFetch）缺少调度策略和浏
 | 能力 | 说明 |
 |------|------|
 | 联网工具自动选择 | WebSearch / WebFetch / curl / Jina / CDP，按场景自主判断，可任意组合 |
-| CDP Proxy 浏览器操作 | 直连用户日常 Chrome，天然携带登录态，支持动态页面、交互操作、视频截帧 |
+| CDP Proxy 浏览器操作 | 支持链接天然携带登录态的主力浏览器或专用浏览器，支持动态页面、交互操作、视频截帧 |
 | 三种点击方式 | `/click`（JS click）、`/clickAt`（CDP 真实鼠标事件）、`/setFiles`（文件上传） |
 | 本地 Chrome 书签/历史检索 | `find-url.mjs` 查询公网搜不到的目标（内部系统）或用户访问过的页面，支持关键词/时间窗/访问频度排序 |
 | 并行分治 | 多目标时分发子 Agent 并行执行，共享一个 Proxy，tab 级隔离 |
@@ -103,22 +103,34 @@ git clone https://github.com/eze-is/web-access ~/.claude/skills/web-access
 
 ## 前置配置（CDP 模式）
 
-CDP 模式需要 **Node.js 22+** 和 Chrome 开启远程调试：
+CDP 模式需要 **Node.js 22+** 和浏览器开启远程调试。两种方式：
 
-1. Chrome 地址栏打开 `chrome://inspect/#remote-debugging`
+### 方式一：主力浏览器
+
+1. 在 Chromium 浏览器地址栏打开 `chrome://inspect/#remote-debugging`
 2. 勾选 **Allow remote debugging for this browser instance**（可能需要重启浏览器）
+
+适合：希望直接复用现有登录态的场景。
+
+### 方式二：专用浏览器
+
+使用独立 `user-data-dir` 启动一个专门给 Agent 使用的 Chromium 浏览器实例。详细流程见下方“专用浏览器引导”。
+
+适合：无人值守、隔离 Agent 操作，或指定 Brave 等 Chromium 浏览器
 
 环境检查（Agent 运行时会自动完成前置检查，无需手动执行）：
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
+node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser primary
+# 或
+node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --dedicated-profile-dir "$HOME/.web-access/<profile-name>"
 # $CLAUDE_SKILL_DIR 是 skill 加载时自动设置的环境变量
 # 手动运行请替换为实际路径，如 ~/.claude/skills/web-access
 ```
 
 ## CDP Proxy API
 
-Proxy 通过 WebSocket 直连 Chrome（兼容 `chrome://inspect` 方式，无需命令行参数启动），提供 HTTP API：
+Proxy 通过 WebSocket 直连浏览器（兼容主力浏览器模式，也兼容专用浏览器模式），提供 HTTP API：
 
 ```bash
 # 启动（Agent 会自动管理 Proxy 生命周期，无需手动启动）

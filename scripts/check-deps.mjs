@@ -11,6 +11,41 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PROXY_SCRIPT = path.join(ROOT, 'scripts', 'cdp-proxy.mjs');
 const PROXY_PORT = Number(process.env.CDP_PROXY_PORT || 3456);
+const DEFAULT_DEDICATED_PROFILE_DIR = path.join(os.homedir(), '.web-access', 'chromium-dedicated-profile');
+
+function parseArgs(argv) {
+  const options = {
+    browser: process.env.BROWSER_MODE || 'primary',
+    dedicatedProfileDir: process.env.DEDICATED_PROFILE_DIR || DEFAULT_DEDICATED_PROFILE_DIR,
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--browser') {
+      options.browser = argv[index + 1] || options.browser;
+      index += 1;
+      continue;
+    }
+    if (arg === '--dedicated-profile-dir') {
+      options.dedicatedProfileDir = argv[index + 1] || options.dedicatedProfileDir;
+      index += 1;
+      continue;
+    }
+    if (arg === '--help' || arg === '-h') {
+      console.log('Usage: node check-deps.mjs [--browser primary|dedicated] [--dedicated-profile-dir <path>]');
+      process.exit(0);
+    }
+    throw new Error(`Unknown argument: ${arg}`);
+  }
+
+  if (!['primary', 'dedicated'].includes(options.browser)) {
+    throw new Error(`Invalid browser mode: ${options.browser}`);
+  }
+
+  return options;
+}
+
+const OPTIONS = parseArgs(process.argv.slice(2));
 
 // --- Node.js 版本检查 ---
 
@@ -42,21 +77,34 @@ function activePortFiles() {
   const localAppData = process.env.LOCALAPPDATA || '';
   switch (os.platform()) {
     case 'darwin':
-      return [
-        path.join(home, 'Library/Application Support/Google/Chrome/DevToolsActivePort'),
-        path.join(home, 'Library/Application Support/Google/Chrome Canary/DevToolsActivePort'),
-        path.join(home, 'Library/Application Support/Chromium/DevToolsActivePort'),
-      ];
+      return OPTIONS.browser === 'primary'
+        ? [
+            path.join(home, 'Library/Application Support/Google/Chrome/DevToolsActivePort'),
+            path.join(home, 'Library/Application Support/Google/Chrome Canary/DevToolsActivePort'),
+            path.join(home, 'Library/Application Support/Chromium/DevToolsActivePort'),
+            path.join(home, 'Library/Application Support/BraveSoftware/Brave-Browser/DevToolsActivePort'),
+            path.join(home, 'Library/Application Support/Microsoft Edge/DevToolsActivePort'),
+            path.join(home, 'Library/Application Support/Arc/User Data/DevToolsActivePort'),
+          ]
+        : [path.join(OPTIONS.dedicatedProfileDir, 'DevToolsActivePort')];
     case 'linux':
-      return [
-        path.join(home, '.config/google-chrome/DevToolsActivePort'),
-        path.join(home, '.config/chromium/DevToolsActivePort'),
-      ];
+      return OPTIONS.browser === 'primary'
+        ? [
+            path.join(home, '.config/google-chrome/DevToolsActivePort'),
+            path.join(home, '.config/chromium/DevToolsActivePort'),
+            path.join(home, '.config/BraveSoftware/Brave-Browser/DevToolsActivePort'),
+            path.join(home, '.config/microsoft-edge/DevToolsActivePort'),
+          ]
+        : [path.join(OPTIONS.dedicatedProfileDir, 'DevToolsActivePort')];
     case 'win32':
-      return [
-        path.join(localAppData, 'Google/Chrome/User Data/DevToolsActivePort'),
-        path.join(localAppData, 'Chromium/User Data/DevToolsActivePort'),
-      ];
+      return OPTIONS.browser === 'primary'
+        ? [
+            path.join(localAppData, 'Google/Chrome/User Data/DevToolsActivePort'),
+            path.join(localAppData, 'Chromium/User Data/DevToolsActivePort'),
+            path.join(localAppData, 'BraveSoftware/Brave-Browser/User Data/DevToolsActivePort'),
+            path.join(localAppData, 'Microsoft/Edge/User Data/DevToolsActivePort'),
+          ]
+        : [path.join(OPTIONS.dedicatedProfileDir, 'DevToolsActivePort')];
     default:
       return [];
   }
@@ -96,6 +144,11 @@ function startProxyDetached() {
   const logFile = path.join(os.tmpdir(), 'cdp-proxy.log');
   const logFd = fs.openSync(logFile, 'a');
   const child = spawn(process.execPath, [PROXY_SCRIPT], {
+    env: {
+      ...process.env,
+      BROWSER_MODE: OPTIONS.browser,
+      DEDICATED_PROFILE_DIR: OPTIONS.dedicatedProfileDir,
+    },
     detached: true,
     stdio: ['ignore', logFd, logFd],
     ...(os.platform() === 'win32' ? { windowsHide: true } : {}),
@@ -105,7 +158,18 @@ function startProxyDetached() {
 }
 
 async function ensureProxy() {
+  const healthUrl = `http://127.0.0.1:${PROXY_PORT}/health`;
   const targetsUrl = `http://127.0.0.1:${PROXY_PORT}/targets`;
+
+  const health = await httpGetJson(healthUrl);
+  if (
+    health?.status === 'ok' &&
+    health.browserMode === OPTIONS.browser &&
+    health.connected === true
+  ) {
+    console.log('proxy: ready');
+    return true;
+  }
 
   // /targets 返回 JSON 数组即 ready
   const targets = await httpGetJson(targetsUrl);
@@ -145,10 +209,16 @@ async function main() {
 
   const chromePort = await detectChromePort();
   if (!chromePort) {
-    console.log('chrome: not connected — 请确保 Chrome 已打开，然后访问 chrome://inspect/#remote-debugging 并勾选 Allow remote debugging');
+    if (OPTIONS.browser === 'primary') {
+      console.log('browser: not connected (primary mode) — 请确保 Chromium 浏览器已打开，然后访问 chrome://inspect/#remote-debugging 并勾选 Allow remote debugging');
+    } else {
+      console.log('browser: not connected (dedicated mode)');
+      console.log('请先启动专用浏览器，或检查 dedicated profile 路径是否正确：');
+      console.log(`  ${OPTIONS.dedicatedProfileDir}`);
+    }
     process.exit(1);
   }
-  console.log(`chrome: ok (port ${chromePort})`);
+  console.log(`browser: ok (port ${chromePort}, ${OPTIONS.browser} mode)`);
 
   const proxyOk = await ensureProxy();
   if (!proxyOk) {
