@@ -1,3 +1,4 @@
 .DS_Store
 *.log
+.browser-mode-preference.json
 references/site-patterns/*.md

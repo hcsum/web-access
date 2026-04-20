@@ -157,6 +157,16 @@ function startProxyDetached() {
   fs.closeSync(logFd);
 }
 
+function stopExistingProxy() {
+  try {
+    const child = spawn('pkill', ['-f', 'cdp-proxy.mjs'], {
+      stdio: 'ignore',
+      ...(os.platform() === 'win32' ? { windowsHide: true } : {}),
+    });
+    child.unref();
+  } catch {}
+}
+
 async function ensureProxy() {
   const healthUrl = `http://127.0.0.1:${PROXY_PORT}/health`;
   const targetsUrl = `http://127.0.0.1:${PROXY_PORT}/targets`;
@@ -169,6 +179,12 @@ async function ensureProxy() {
   ) {
     console.log('proxy: ready');
     return true;
+  }
+
+  if (health?.status === 'ok') {
+    console.log('proxy: restarting stale instance...');
+    stopExistingProxy();
+    await new Promise((r) => setTimeout(r, 1000));
   }
 
   // /targets 返回 JSON 数组即 ready

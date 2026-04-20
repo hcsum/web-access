@@ -14,15 +14,32 @@ metadata:
 
 ## 前置检查
 
-在开始联网操作前，先检查 CDP 模式可用性：
+在开始联网操作前，先探测当前有哪些浏览器模式已就绪，不要一上来就直接运行 `check-deps.mjs`：
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
+node "${CLAUDE_SKILL_DIR}/scripts/detect-browser-setup.mjs"
 ```
+
+这个探测只用于判断事实：
+
+- `primary: ready` 表示主力浏览器当前可连
+- `dedicated: ready` 表示给定专用 profile 当前可连
+- `preference: primary|dedicated` 表示已记录的默认浏览器模式
+- `preference: not set` 表示尚未记录默认浏览器模式
 
 未通过时引导用户完成设置：
 - **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
 - 见浏览器模式引导部分，选择主力浏览器或专用浏览器，并按照提示操作。
+
+**模式决策规则**：
+
+- 如果当前会话里用户已经明确说要用 `主力浏览器` 还是 `专用浏览器`，直接按该模式继续
+- 如果只探测到一种模式可用，直接使用那一种模式
+- 如果两种模式都可用：
+  - 若 `preference` 已记录默认模式，优先使用该默认模式
+  - 若 `preference` 为空，再进入“浏览器模式引导”询问用户
+- 如果两种模式都不可用，进入“浏览器模式引导”
+- 只有在模式已经确定后，才运行对应的 `check-deps.mjs`
 
 检查通过后并必须在回复中向用户直接展示以下须知，再启动 CDP Proxy 执行操作：
 
@@ -109,6 +126,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks
 - 如果用户选择 **主力浏览器**：
   - 让用户在 Chromium 浏览器地址栏打开 `chrome://inspect/#remote-debugging`
   - 勾选 **"Allow remote debugging for this browser instance"**
+  - 记录默认模式：`node "${CLAUDE_SKILL_DIR}/scripts/browser-mode-preference.mjs" set --browser primary`
   - 然后继续运行 `node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser primary`
 - 如果用户选择 **专用浏览器**：
   - 先询问用户希望使用哪个浏览器，不要直接假设。优先提供以下选项，并附带一个自由输入项：
@@ -120,14 +138,24 @@ node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks
     - `Arc`
     - `自由输入`
   - 拿到结果后，不要替用户执行启动命令。直接返回该浏览器的启动命令，让用户自己运行。
+  - 用户运行后，记录默认模式：`node "${CLAUDE_SKILL_DIR}/scripts/browser-mode-preference.mjs" set --browser dedicated --browser-app "<浏览器名>" --dedicated-profile-dir "<同一个 profile 目录>"`
   - 用户运行后，继续使用 `node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --dedicated-profile-dir "<同一个 profile 目录>"`
 
-命令格式统一为：
+### 如何判断是否已经完成引导
+
+采用“事实检测 + 默认偏好”组合：
+
+- 对 **主力浏览器**：`detect-browser-setup.mjs` 显示 `primary: ready`，说明当前主力浏览器已可连
+- 对 **专用浏览器**：只有在已知专用 profile 路径的前提下，`detect-browser-setup.mjs --dedicated-profile-dir "<profile>"` 显示 `dedicated: ready`，才算当前专用浏览器已就绪
+- 默认偏好保存在 skill 根目录下的 `.browser-mode-preference.json`
+- 如果两种模式都可用，且默认偏好存在，就优先使用默认模式；默认偏好为空时才询问用户
+
+判断当前运行环境，给出对应平台以及浏览器的启动命令示例，以 Chrome跟MacOS为例：
 
 ```bash
-open -na "<浏览器名>" --args \
+open -na "Google Chrome" --args \
   --remote-debugging-port=9333 \
-  --user-data-dir="$HOME/.web-access/<profile-name>"
+  --user-data-dir="$HOME/.web-access/chrome-dedicated-profile"
 ```
 
 ## 浏览器 CDP 模式
