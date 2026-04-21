@@ -121,17 +121,15 @@ async function main() {
   }
 
   if (primary.available) {
-    console.log(`primary: ready (port ${primary.port})`);
+    console.log('primary: ready');
   } else {
     console.log('primary: not ready');
   }
 
   if (dedicated.available) {
-    console.log(`dedicated: ready (port ${dedicated.port}, profile ${dedicatedProfileDir})`);
-  } else if (dedicated.missingProfileDir) {
-    console.log('dedicated: not ready (missing profile dir)');
+    console.log('dedicated: ready');
   } else {
-    console.log(`dedicated: not ready (profile ${dedicatedProfileDir})`);
+    console.log('dedicated: not ready');
   }
 
   if (preference?.preferredBrowserMode) {

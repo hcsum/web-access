@@ -4,7 +4,6 @@
 // Node.js 22+（使用原生 WebSocket）
 
 import http from 'node:http';
-import { URL } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -133,29 +132,6 @@ let chromeWsPath = null;
 
 let connectingPromise = null;
 
-async function fetchBrowserWebSocketUrl(port) {
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    if (!response.ok) return null;
-
-    const payload = await response.json();
-    const wsUrl = payload?.webSocketDebuggerUrl;
-    if (typeof wsUrl !== 'string') return null;
-
-    const url = new URL(wsUrl);
-    if (url.protocol !== 'ws:' || url.hostname !== '127.0.0.1') return null;
-
-    return {
-      url: wsUrl,
-      wsPath: `${url.pathname}${url.search}`,
-    };
-  } catch {
-    return null;
-  }
-}
-
 async function connect() {
   if (ws && (ws.readyState === WS.OPEN || ws.readyState === 1)) return;
   if (connectingPromise) return connectingPromise;  // 复用进行中的连接
@@ -171,11 +147,6 @@ async function connect() {
     }
     chromePort = discovered.port;
     chromeWsPath = discovered.wsPath;
-  }
-
-  const liveBrowserWs = await fetchBrowserWebSocketUrl(chromePort);
-  if (liveBrowserWs) {
-    chromeWsPath = liveBrowserWs.wsPath;
   }
 
   const wsUrl = getWebSocketUrl(chromePort, chromeWsPath);

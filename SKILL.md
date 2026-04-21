@@ -14,7 +14,7 @@ metadata:
 
 ## 前置检查
 
-在开始联网操作前，先探测当前有哪些浏览器模式已就绪，不要一上来就直接运行 `check-deps.mjs`：
+在开始联网操作前，先探测当前有哪些浏览器模式已就绪：
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/detect-browser-setup.mjs"
@@ -22,15 +22,13 @@ node "${CLAUDE_SKILL_DIR}/scripts/detect-browser-setup.mjs"
 
 这个探测只用于判断事实：
 
-- `primary: ready` 表示主力浏览器当前可连
-- `dedicated: ready` 表示给定专用 profile 当前可连
-- `dedicated: not ready (missing profile dir)` 表示尚未记录专用 profile 路径，此时应直接视为专用浏览器不可用
-- `preference: primary|dedicated` 表示已记录的默认浏览器模式
-- `preference: not set` 表示尚未记录默认浏览器模式
+- `primary: ready | not ready`
+- `dedicated: ready | not ready`
+- `preference: primary | dedicated | not set`
 
 未通过时引导用户完成设置：
 - **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
-- 见浏览器模式引导部分，选择主力浏览器或专用浏览器，并按照提示操作。
+- 见**浏览器模式引导**部分，选择主力浏览器或专用浏览器，并按照提示操作。
 
 **模式决策规则**：
 
@@ -38,8 +36,8 @@ node "${CLAUDE_SKILL_DIR}/scripts/detect-browser-setup.mjs"
 - 如果只探测到一种模式可用，直接使用那一种模式
 - 如果两种模式都可用：
   - 若 `preference` 已记录默认模式，优先使用该默认模式
-  - 若 `preference` 为空，再进入“浏览器模式引导”询问用户
-- 如果两种模式都不可用，进入“浏览器模式引导”
+  - 若 `preference` 为空，再进入**浏览器模式引导**询问用户
+- 如果两种模式都不可用，进入**浏览器模式引导**
 - 只有在模式已经确定后，才运行对应的 `check-deps.mjs`
 
 检查通过后并必须在回复中向用户直接展示以下须知，再启动 CDP Proxy 执行操作：
@@ -111,16 +109,18 @@ node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks
 
 在需要浏览器操作、而用户尚未说明要用哪种浏览器模式时，让用户选择：`主力浏览器` 还是 `专用浏览器`。
 
-### 向用户说明的选择项，必须包含以下内容：
+### 向用户说明的选择项：
 
 1. **主力浏览器**
   - 好处：直接复用现有登录态、书签、插件，不需要重新登录常用网站
   - 代价：可能偶尔需要处理远程调试授权弹窗；Agent 操作和用户自己的浏览器操作不隔离
   - 适合：用户在电脑前，希望快速开始，且优先复用已有浏览器环境
 2. **专用浏览器**
-  - 好处：更适合无人值守操作；不需要偶尔处理远程调试授权弹窗；Agent 操作和用户自己的浏览器操作隔离；可指定 Chrome 以外的 Chromium 浏览器（如 Brave）
+  - 好处：更适合无人值守操作；通常不需要处理远程调试授权弹窗；Agent 操作和用户自己的浏览器操作隔离；可指定 Chrome 以外的 Chromium 浏览器（如 Brave）
   - 代价：第一次需要在专用 profile 中重新登录常用网站、安装常用插件；这些状态会保存在专用 profile 中，不会自动复用主力浏览器的现有状态
   - 适合：用户不在电脑前、需要长时间自动化操作，或希望把 Agent 和自己的浏览器环境隔离
+
+必须提供清晰的选择说明，确保用户理解两种模式的区别和后续操作要求，再让用户做出选择。
 
 ### 用户选择后的后续操作
 
@@ -152,7 +152,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks
 - 如果偏好文件里没有 `preferredDedicatedProfileDir`，就直接视为专用浏览器当前不可用，不要再猜默认专用 profile 路径
 - 如果两种模式都可用，且默认偏好存在，就优先使用默认模式；默认偏好为空时才询问用户
 
-判断当前运行环境，给出对应平台以及浏览器的启动命令示例，以MacOS为例：
+判断当前运行环境，给出对应平台和浏览器的启动命令示例。下面以 `macOS` 为例：
 
 ```bash
 open -na "<浏览器名>" --args \
@@ -250,7 +250,7 @@ curl -s "http://localhost:3456/close?target=ID"
 登录判断的核心问题只有一个：**目标内容拿到了吗？**
 
 打开页面后先尝试获取目标内容。只有当确认**目标内容无法获取**且判断登录能解决时，才告知用户：
-> "当前页面在未登录状态下无法获取[具体内容]，请在你的 Chrome 中登录 [网站名]，完成后告诉我继续。"
+> "当前页面在未登录状态下无法获取[具体内容]，请在当前使用的浏览器中登录 [网站名]，完成后告诉我继续。"
 
 登录完成后无需重启任何东西，直接刷新页面继续。若使用专用浏览器，后续同一 profile 会保留该登录态。
 
