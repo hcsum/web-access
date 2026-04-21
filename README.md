@@ -105,6 +105,20 @@ git clone https://github.com/eze-is/web-access ~/.claude/skills/web-access
 
 CDP 模式需要 **Node.js 22+** 和浏览器开启远程调试。
 
+先决定用哪种浏览器模式，再进入对应配置：
+
+| 模式 | 适合场景 | 主要优势 | 主要代价 |
+|------|----------|----------|----------|
+| 主力浏览器 | 希望直接复用日常浏览器状态 | 自动继承现有登录态、书签、插件 | 连接时可能需要处理远程调试授权弹窗；Agent 操作和用户自己的浏览器操作不隔离 |
+| 专用浏览器 | 已经预先配置好独立 profile，希望日常运行更适合 autonomous agent | 平时 Agent 操作通常不需要处理远程调试授权弹窗；Agent 操作和用户自己的浏览器操作隔离 | 首次配置时需要单独登录常用网站、安装常用插件、同步书签 |
+
+专用浏览器的重点不是替代首次配置，而是让**配置完成后的日常运行**更稳定：使用同一个 dedicated profile 持续运行时，通常不会再像主力浏览器那样遇到调试授权弹窗。
+
+如果是 Agent 在向用户发起模式选择，不应只给“1 / 2”两个编号。应该把两者的差异、收益和代价直接讲清楚，让用户按自己的场景选择：
+
+- 需要立刻复用现有登录态、马上完成一次任务：通常选 `主力浏览器`
+- 需要把 Agent 操作和日常使用隔离开、希望长期稳定复用同一套环境：通常选 `专用浏览器`
+
 ### 主力浏览器
 
 1. 在 Chromium 系浏览器地址栏打开 `chrome://inspect/#remote-debugging`
@@ -133,13 +147,14 @@ open -na "Brave Browser" --args \
   --user-data-dir="$HOME/.web-access/brave-dedicated-profile"
 ```
 
-环境检查：
+专用浏览器启动后，只运行 dedicated 检查命令，不要先跑默认检查命令：
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
 node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --browser-id brave
 # $CLAUDE_SKILL_DIR 是 skill 加载时自动设置的环境变量
 ```
+
+默认检查命令 `node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"` 只适用于主力浏览器路径。已经选定专用浏览器时，后续检查和连接都应继续带上 `--browser dedicated --browser-id ...`，避免流程被带回主力浏览器模式。
 
 ## CDP Proxy API
 

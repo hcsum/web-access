@@ -127,6 +127,39 @@ function checkPort(port) {
   });
 }
 
+async function fetchJson(url, timeoutMs = 1500) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    return JSON.parse(await res.text());
+  } catch {
+    return null;
+  }
+}
+
+function parseWsPath(webSocketDebuggerUrl) {
+  if (!webSocketDebuggerUrl) return null;
+  try {
+    const parsed = new URL(webSocketDebuggerUrl);
+    return parsed.pathname || null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveBrowserWsPath(port, fallbackWsPath) {
+  // 统一逻辑：无论 primary 还是 dedicated，都是先尝试 /json/version
+  // 取最新 webSocketDebuggerUrl；拿不到时再回退到 DevToolsActivePort 里的 wsPath。
+  const version = await fetchJson(`http://127.0.0.1:${port}/json/version`);
+  const wsPathFromHttp = parseWsPath(version?.webSocketDebuggerUrl);
+  if (wsPathFromHttp) {
+    if (fallbackWsPath && fallbackWsPath !== wsPathFromHttp) {
+      console.log('[CDP Proxy] /json/version 返回了新的 browser wsPath，优先使用它');
+    }
+    return wsPathFromHttp;
+  }
+  return fallbackWsPath;
+}
+
 function getWebSocketUrl(port, wsPath) {
   if (wsPath) return `ws://127.0.0.1:${port}${wsPath}`;
   return `ws://127.0.0.1:${port}/devtools/browser`;
@@ -164,7 +197,7 @@ async function connect() {
       );
     }
     chromePort = discovered.port;
-    chromeWsPath = discovered.wsPath;
+    chromeWsPath = await resolveBrowserWsPath(discovered.port, discovered.wsPath);
   }
 
   const wsUrl = getWebSocketUrl(chromePort, chromeWsPath);
