@@ -246,7 +246,7 @@ async function main() {
   const chromePort = await detectChromePort();
   if (!chromePort) {
     if (OPTIONS.browser === 'primary') {
-      console.log('browser: not connected (primary mode) — 请确保 Chromium 系浏览器已打开，然后访问 chrome://inspect/#remote-debugging 并勾选 Allow remote debugging');
+      console.log('browser: not connected (primary mode) — 请先让用户决定：开启当前主力浏览器的远程调试，或明确切换到专用浏览器；不要自动改走专用浏览器路径。');
     } else {
       console.log('browser: not connected (dedicated mode)');
       console.log('请先启动专用浏览器，或检查 dedicated profile 路径是否正确：');
