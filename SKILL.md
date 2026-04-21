@@ -7,38 +7,48 @@ description:
   触发场景：用户要求搜索信息、查看网页内容、访问需要登录的网站、操作网页界面、抓取社交媒体内容（小红书、微博、推特等）、读取动态渲染页面、以及任何需要真实浏览器环境的网络任务。
 metadata:
   author: 一泽Eze
-  version: "2.5.0"
+  version: "2.6.0"
 ---
 
 # web-access Skill
 
 ## 前置检查
 
-在开始联网操作前，先探测当前有哪些浏览器模式已就绪：
+在开始联网操作前，先检查 CDP 是否可用：
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/detect-browser-setup.mjs"
+node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
 ```
 
-这个探测只用于判断事实：
+如果用户要用专用浏览器，先只问一次他要用哪个浏览器，然后把选择映射成稳定的 `browser-id`：
 
-- `primary: ready | not ready`
-- `dedicated: ready | not ready`
-- `preference: primary | dedicated | not set`
+| browser-id | 浏览器 App 名称 |
+|---|---|
+| `chrome` | `Google Chrome` |
+| `chrome-canary` | `Google Chrome Canary` |
+| `chromium` | `Chromium` |
+| `brave` | `Brave Browser` |
+| `edge` | `Microsoft Edge` |
+| `arc` | `Arc` |
 
-未通过时引导用户完成设置：
+确定 `browser-id` 后，专用浏览器启动命令固定为：
+
+```bash
+open -na "<Browser App Name>" --args \
+  --remote-debugging-port=9333 \
+  --user-data-dir="$HOME/.web-access/<browser-id>-dedicated-profile"
+```
+
+然后运行：
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --browser-id <browser-id>
+```
+
+补充约束：
+
 - **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
-- 见**浏览器模式引导**部分，选择主力浏览器或专用浏览器，并按照提示操作。
-
-**模式决策规则**：
-
-- 如果当前会话里用户已经明确说要用 `主力浏览器` 还是 `专用浏览器`，直接按该模式继续
-- 如果只探测到一种模式可用，直接使用那一种模式
-- 如果两种模式都可用：
-  - 若 `preference` 已记录默认模式，优先使用该默认模式
-  - 若 `preference` 为空，再进入**浏览器模式引导**询问用户
-- 如果两种模式都不可用，进入**浏览器模式引导**
-- 只有在模式已经确定后，才运行对应的 `check-deps.mjs`
+- 主力浏览器模式默认直接用当前已开着的 Chromium 系浏览器，不做额外偏好记忆。
 
 检查通过后并必须在回复中向用户直接展示以下须知，再启动 CDP Proxy 执行操作：
 
@@ -107,28 +117,24 @@ node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks
 
 ## 浏览器模式引导
 
-在需要浏览器操作、而用户尚未说明要用哪种浏览器模式时，让用户选择：`主力浏览器` 还是 `专用浏览器`。
+在需要浏览器操作、且用户尚未说明用主力浏览器还是专用浏览器时，再进入浏览器模式引导。
 
-### 向用户说明的选择项：
+### 必须向用户提供以下选择说明:
 
 1. **主力浏览器**
   - 好处：直接复用现有登录态、书签、插件，不需要重新登录常用网站
   - 代价：可能偶尔需要处理远程调试授权弹窗；Agent 操作和用户自己的浏览器操作不隔离
-  - 适合：用户在电脑前，希望快速开始，且优先复用已有浏览器环境
 2. **专用浏览器**
-  - 好处：更适合无人值守操作；通常不需要处理远程调试授权弹窗；Agent 操作和用户自己的浏览器操作隔离；可指定 Chrome 以外的 Chromium 浏览器（如 Brave）
-  - 代价：第一次需要在专用 profile 中重新登录常用网站、安装常用插件；这些状态会保存在专用 profile 中，不会自动复用主力浏览器的现有状态
-  - 适合：用户不在电脑前、需要长时间自动化操作，或希望把 Agent 和自己的浏览器环境隔离
-
-必须提供清晰的选择说明，确保用户理解两种模式的区别和后续操作要求，再让用户做出选择。
+  - 好处：更适合无人值守操作；通常不需要处理远程调试授权弹窗；Agent 操作和用户自己的浏览器操作完全隔离
+  - 代价：第一次需要重新登录常用网站、安装常用插件、同步书签；这些状态会保存在专用 profile 中
 
 ### 用户选择后的后续操作
 
 - 如果用户选择 **主力浏览器**：
-  - 让用户在 Chromium 浏览器地址栏打开 `chrome://inspect/#remote-debugging`
+  - 让用户在 Chromium 系浏览器地址栏打开 `chrome://inspect/#remote-debugging`
   - 勾选 **"Allow remote debugging for this browser instance"**
-  - 记录默认模式：`node "${CLAUDE_SKILL_DIR}/scripts/browser-mode-preference.mjs" set --browser primary`
-  - 然后继续运行 `node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser primary`
+  - 用户完成后，将后续参数设为：`--browser primary`
+
 - 如果用户选择 **专用浏览器**：
   - 先询问用户希望使用哪个浏览器，不要直接假设。优先提供以下选项，并附带一个自由输入项：
     - `Google Chrome`
@@ -137,28 +143,8 @@ node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks
     - `Brave Browser`
     - `Microsoft Edge`
     - `Arc`
-    - `自由输入`
-  - 拿到结果后，不要替用户执行启动命令。直接返回该浏览器的启动命令，让用户自己运行。
-  - 用户运行后，记录默认模式：`node "${CLAUDE_SKILL_DIR}/scripts/browser-mode-preference.mjs" set --browser dedicated --browser-app "<浏览器名>" --dedicated-profile-dir "<同一个 profile 目录>"`
-  - 用户运行后，继续使用 `node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --dedicated-profile-dir "<同一个 profile 目录>"`
-
-### 如何判断是否已经完成引导
-
-采用“事实检测 + 默认偏好”组合：
-
-- 对 **主力浏览器**：`detect-browser-setup.mjs` 显示 `primary: ready`，说明当前主力浏览器已可连
-- 对 **专用浏览器**：只有在已知专用 profile 路径的前提下，`detect-browser-setup.mjs --dedicated-profile-dir "<profile>"` 显示 `dedicated: ready`，才算当前专用浏览器已就绪
-- 默认偏好保存在 skill 根目录下的 `.browser-mode-preference.json`
-- 如果偏好文件里没有 `preferredDedicatedProfileDir`，就直接视为专用浏览器当前不可用，不要再猜默认专用 profile 路径
-- 如果两种模式都可用，且默认偏好存在，就优先使用默认模式；默认偏好为空时才询问用户
-
-判断当前运行环境，给出对应平台和浏览器的启动命令示例。下面以 `macOS` 为例：
-
-```bash
-open -na "<浏览器名>" --args \
-  --remote-debugging-port=9333 \
-  --user-data-dir="$HOME/.web-access/<浏览器名>-dedicated-profile"
-```
+  - 把用户选择映射成对应 `browser-id`，然后返回固定启动命令，不要替用户执行启动。
+  - 用户确认已启动后，将后续参数设为：`--browser dedicated --browser-id <browser-id>`
 
 ## 浏览器 CDP 模式
 
@@ -232,6 +218,7 @@ curl -s "http://localhost:3456/close?target=ID"
 判断内容在图片里时，用 `/eval` 从 DOM 直接拿图片 URL，再定向读取——比全页截图精准得多。
 
 ### 技术事实
+
 - 页面中存在大量已加载但未展示的内容——轮播中非当前帧的图片、折叠区块的文字、懒加载占位元素等，它们存在于 DOM 中但对用户不可见。以数据结构（容器、属性、节点关系）为单位思考，可以直接触达这些内容。
 - DOM 中存在选择器不可跨越的边界（Shadow DOM 的 `shadowRoot`、iframe 的 `contentDocument`等）。eval 递归遍历可一次穿透所有层级，返回带标签的结构化内容，适合快速了解未知页面的完整结构。
 - `/scroll` 到底部会触发懒加载，使未进入视口的图片完成加载。提取图片 URL 前若未滚动，部分图片可能尚未加载。
@@ -241,7 +228,7 @@ curl -s "http://localhost:3456/close?target=ID"
 
 ### 视频内容获取
 
-用户 Chrome 真实渲染，截图可捕获当前视频帧。核心能力：通过 `/eval` 操控 `<video>` 元素（获取时长、seek 到任意时间点、播放/暂停/全屏），配合 `/screenshot` 采帧，可对视频内容进行离散采样分析。
+浏览器真实渲染，截图可捕获当前视频帧。核心能力：通过 `/eval` 操控 `<video>` 元素（获取时长、seek 到任意时间点、播放/暂停/全屏），配合 `/screenshot` 采帧，可对视频内容进行离散采样分析。
 
 ### 登录判断
 
@@ -258,7 +245,7 @@ curl -s "http://localhost:3456/close?target=ID"
 
 用 `/close` 关闭自己创建的 tab，必须保留用户原有的 tab 不受影响。
 
-Proxy 持续运行，不建议主动停止——重启后需要在 Chrome 中重新授权 CDP 连接。
+Proxy 持续运行，不建议主动停止——重启后需要在浏览器中重新授权 CDP 连接。
 
 ## 并行调研：子 Agent 分治策略
 
@@ -271,7 +258,7 @@ Proxy 持续运行，不建议主动停止——重启后需要在 Chrome 中重
 **并行 CDP 操作**：每个子 Agent 在当前浏览器实例中，自行创建所需的后台 tab（`/new`），自行操作，任务结束自行关闭（`/close`）。所有子 Agent 共享一个 Chromium 浏览器实例和一个 Proxy，通过不同 targetId 操作不同 tab，无竞态风险。
 
 **子 Agent Prompt 写法：目标导向，而非步骤指令**
-- 必须在子 Agent prompt 中写 `必须加载 web-access skill 并遵循指引` ，子 Agent 会自动加载 skill，无需在 prompt 中复制 skill 内容或指定路径。
+- 必须在子 Agent prompt 中写 `必须加载 web-access skill 并遵循指引`，子 Agent 会自动加载 skill，无需在 prompt 中复制 skill 内容或指定路径。
 - 子 Agent 有自主判断能力。主 Agent 的职责是说清楚**要什么**，仅在必要与确信时限定**怎么做**。过度指定步骤会剥夺子 Agent 的判断空间，反而引入主 Agent 的假设错误。**避免 prompt 用词对子 Agent 行为的暗示**：「搜索xx」会把子 Agent 锚定到 WebSearch，而实际上有些反爬站点需要 CDP 直接访问主站才能有效获取内容。主 Agent 写 prompt 时应描述目标（「获取」「调研」「了解」），避免用暗示具体手段的动词（「搜索」「抓取」「爬取」）。
 
 **分治判断标准：**

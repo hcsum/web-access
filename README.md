@@ -36,7 +36,7 @@ AI Agent 原本的联网能力（WebSearch、WebFetch）缺少调度策略和浏
 | 能力 | 说明 |
 |------|------|
 | 联网工具自动选择 | WebSearch / WebFetch / curl / Jina / CDP，按场景自主判断，可任意组合 |
-| CDP Proxy 浏览器操作 | 支持天然携带登录态的主力浏览器，或无需授权确认的专用浏览器，支持动态页面、交互操作、视频截帧 |
+| CDP Proxy 浏览器操作 | 支持主力浏览器或专用浏览器，支持动态页面、交互操作、视频截帧 |
 | 三种点击方式 | `/click`（JS click）、`/clickAt`（CDP 真实鼠标事件）、`/setFiles`（文件上传） |
 | 本地 Chrome 书签/历史检索 | `find-url.mjs` 查询公网搜不到的目标（内部系统）或用户访问过的页面，支持关键词/时间窗/访问频度排序 |
 | 并行分治 | 多目标时分发子 Agent 并行执行，共享一个 Proxy，tab 级隔离 |
@@ -105,40 +105,45 @@ git clone https://github.com/eze-is/web-access ~/.claude/skills/web-access
 
 CDP 模式需要 **Node.js 22+** 和浏览器开启远程调试。
 
-### 方式一：主力浏览器
+### 主力浏览器
 
-1. 在 Chromium 浏览器地址栏打开 `chrome://inspect/#remote-debugging`
+1. 在 Chromium 系浏览器地址栏打开 `chrome://inspect/#remote-debugging`
 2. 勾选 **Allow remote debugging for this browser instance**（可能需要重启浏览器）
 
-适合：希望直接复用现有登录态的场景。
+### 专用浏览器
 
-### 方式二：专用浏览器
+先选定一个稳定的 `browser-id`：
 
-使用独立 profile 启动一个专门给 Agent 使用的 Chromium 浏览器实例。
+| browser-id | 浏览器 App 名称 |
+|---|---|
+| `chrome` | `Google Chrome` |
+| `chrome-canary` | `Google Chrome Canary` |
+| `chromium` | `Chromium` |
+| `brave` | `Brave Browser` |
+| `edge` | `Microsoft Edge` |
+| `arc` | `Arc` |
 
-适合：无人值守、无需处理远程调试授权弹窗、完全隔离 Agent 操作，或指定其他 Chromium 浏览器
+对应的专用 profile 目录固定为：`$HOME/.web-access/<browser-id>-dedicated-profile`
 
-首次使用时，建议先探测当前有哪些浏览器模式已就绪，再决定后续走主力浏览器还是专用浏览器：
+macOS 启动命令示例：
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/detect-browser-setup.mjs"
+open -na "Brave Browser" --args \
+  --remote-debugging-port=9333 \
+  --user-data-dir="$HOME/.web-access/brave-dedicated-profile"
 ```
 
-如果两种模式都可用，`web-access` 会优先参考已记录的默认浏览器模式；默认值为空时再询问用户。默认值保存在 skill 根目录下的 `.browser-mode-preference.json`。
-
-环境检查（Agent 运行时会自动完成前置检查，无需手动执行）：
+环境检查：
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser primary
-# 或
-node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --dedicated-profile-dir "$HOME/.web-access/<profile-name>"
+node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
+node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --browser-id brave
 # $CLAUDE_SKILL_DIR 是 skill 加载时自动设置的环境变量
-# 手动运行请替换为实际路径，如 ~/.claude/skills/web-access
 ```
 
 ## CDP Proxy API
 
-Proxy 通过 WebSocket 直连浏览器，同时支持主力浏览器模式和专用浏览器模式，提供 HTTP API：
+Proxy 通过 WebSocket 直连浏览器，提供 HTTP API：
 
 ```bash
 # 启动（Agent 会自动管理 Proxy 生命周期，无需手动启动）
