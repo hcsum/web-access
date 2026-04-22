@@ -367,7 +367,14 @@ const server = http.createServer(async (req, res) => {
     // /health 不需要连接 Chrome
     if (pathname === '/health') {
       const connected = ws && (ws.readyState === WS.OPEN || ws.readyState === 1);
-      res.end(JSON.stringify({ status: 'ok', connected, browserMode: BROWSER_MODE, sessions: sessions.size, chromePort }));
+      res.end(JSON.stringify({
+        status: 'ok',
+        connected,
+        browserMode: BROWSER_MODE,
+        browserId: BROWSER_MODE === 'dedicated' ? BROWSER_ID : null,
+        sessions: sessions.size,
+        chromePort,
+      }));
       return;
     }
 
