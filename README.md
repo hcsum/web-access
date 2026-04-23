@@ -134,7 +134,10 @@ curl -s -X POST "http://localhost:3456/setFiles?target=ID" \
 curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png"     # 截图
 curl -s "http://localhost:3456/scroll?target=ID&direction=bottom"           # 滚动
 curl -s "http://localhost:3456/close?target=ID"                             # 关闭 tab
+curl -s "http://localhost:3456/health"                                      # 查看状态（含 managedTabs 数量）
 ```
+
+Proxy 会自动追踪通过 `/new` 创建的 tab，闲置 15 分钟后自动关闭，防止 Agent 异常退出时留下孤儿 tab。可通过环境变量 `CDP_TAB_IDLE_TIMEOUT`（单位毫秒）调整超时时间。
 
 ## ⚠️ 使用前提醒
 
