@@ -48,11 +48,10 @@ function parseArgs(argv) {
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  if (!['main', 'primary', 'dedicated'].includes(options.browser)) {
+  if (!['main', 'dedicated'].includes(options.browser)) {
     throw new Error(`Invalid browser mode: ${options.browser}`);
   }
 
-  if (options.browser === 'primary') options.browser = 'main';
 
   if (options.browser === 'dedicated') {
     if (!options.browserId) {

@@ -11,7 +11,7 @@ import net from 'node:net';
 
 const PORT = parseInt(process.env.CDP_PROXY_PORT || '3456');
 const RAW_BROWSER_MODE = process.env.BROWSER_MODE || 'main';
-const BROWSER_MODE = RAW_BROWSER_MODE === 'primary' ? 'main' : RAW_BROWSER_MODE;
+const BROWSER_MODE = RAW_BROWSER_MODE;
 const BROWSER_ID = process.env.BROWSER_ID || process.env.BROWSER_APP || 'chromium';
 const DEDICATED_PROFILE_DIR = process.env.DEDICATED_PROFILE_DIR || path.join(os.homedir(), '.web-access', `${BROWSER_ID}-dedicated-profile`);
 let ws = null;
