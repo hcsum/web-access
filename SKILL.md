@@ -22,7 +22,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
 
 必须遵循以下模式决策流程：
 
-1. **永远先执行默认检查命令**：`node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"`
+1. **首次进入任务或未确定模式时，先执行默认检查命令**：`node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"`
 2. 若检查结果显示 **主力浏览器和专用浏览器都可用**：默认走 **专用浏览器（dedicated）**。只有用户明确要求主力浏览器时才走主力浏览器。
 3. 若只有一侧可用：直接使用可用的一侧。
 4. 若两侧都不可用：再提示用户选择要启用主力浏览器还是专用浏览器，并按选择引导配置。
@@ -32,9 +32,33 @@ node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --browser-id <chrome|chrome-canary|chromium|brave|edge|arc>
 ```
-未通过时引导用户完成设置：
-- **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
-- **浏览器 remote-debugging**：在浏览器地址栏打开 `chrome://inspect/#remote-debugging`，勾选 **"Allow remote debugging for this browser instance"** 即可，可能需要重启浏览器。
+未通过时按用户选择给出对应配置流程：
+
+- **通用前提（两种模式都需要）**：Node.js 22+（使用原生 WebSocket）。
+
+- **主力浏览器配置**：
+1. 在 Chromium 系浏览器地址栏打开 `chrome://inspect/#remote-debugging`
+2. 勾选 **Allow remote debugging for this browser instance**（可能需要重启浏览器）
+3. 重新执行默认检查：`node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"`
+
+- **专用浏览器（dedicated）配置**：
+1. 先选一个 `browser-id`（`chrome` / `chrome-canary` / `chromium` / `brave` / `edge` / `arc`）
+2. 专用 profile 目录固定为：`$HOME/.web-access/<browser-id>-dedicated-profile`
+3. 启动该专用浏览器实例并带远程调试参数（macOS 示例）：
+
+```bash
+open -na "Brave Browser" --args \
+  --remote-debugging-port=9333 \
+  --user-data-dir="$HOME/.web-access/brave-dedicated-profile"
+```
+
+4. 重新执行 dedicated 检查：
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --browser-id brave
+```
+
+5. 一旦用户明确要求 dedicated 并进入 dedicated 路径，后续检查与连接保持 dedicated 参数，不要混用默认检查命令。
 
 检查通过后并必须在回复中向用户直接展示以下须知，再启动 CDP Proxy 执行操作：
 
@@ -103,7 +127,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks
 
 ## 浏览器 CDP 模式
 
-通过 CDP Proxy 直连用户日常浏览器，天然携带登录态，无需启动独立浏览器。
+通过 CDP Proxy 直连当前选定的浏览器实例（主力浏览器或专用浏览器），无需启动独立浏览器。
 若无用户明确要求，不主动操作用户已有 tab，所有操作都在自己创建的后台 tab 中进行，保持对用户环境的最小侵入。不关闭用户 tab 的前提下，完成任务后关闭自己创建的 tab，保持环境整洁。
 
 ### 启动
@@ -182,7 +206,7 @@ curl -s "http://localhost:3456/close?target=ID"
 
 ### 登录判断
 
-用户日常浏览器天然携带登录态，大多数常用网站已登录。
+主力浏览器通常天然携带登录态，大多数常用网站已登录。专用浏览器（dedicated）需要一次性手动登录，后续复用同一 profile 可保持登录状态。
 
 登录判断的核心问题只有一个：**目标内容拿到了吗？**
 
