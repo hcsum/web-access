@@ -20,6 +20,18 @@ metadata:
 node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
 ```
 
+必须遵循以下模式决策流程：
+
+1. **永远先执行默认检查命令**：`node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"`
+2. 若检查结果显示 **主力浏览器和专用浏览器都可用**：默认走 **专用浏览器（dedicated）**。只有用户明确要求主力浏览器时才走主力浏览器。
+3. 若只有一侧可用：直接使用可用的一侧。
+4. 若两侧都不可用：再提示用户选择要启用主力浏览器还是专用浏览器，并按选择引导配置。
+
+用户明确要求专用浏览器时，或需要固定专用浏览器时，检查命令应显式带参数：
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --browser-id <chrome|chrome-canary|chromium|brave|edge|arc>
+```
 未通过时引导用户完成设置：
 - **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
 - **浏览器 remote-debugging**：在浏览器地址栏打开 `chrome://inspect/#remote-debugging`，勾选 **"Allow remote debugging for this browser instance"** 即可，可能需要重启浏览器。

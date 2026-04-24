@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PROXY_SCRIPT = path.join(ROOT, 'scripts', 'cdp-proxy.mjs');
 const PROXY_PORT = Number(process.env.CDP_PROXY_PORT || 3456);
-const ALLOWED_BROWSER_IDS = new Set(['chrome', 'chrome-canary', 'chromium', 'brave', 'edge', 'arc']);
+const ALLOWED_BROWSER_IDS = ['chrome', 'chrome-canary', 'chromium', 'brave', 'edge', 'arc'];
+const ALLOWED_BROWSER_ID_SET = new Set(ALLOWED_BROWSER_IDS);
 
 function defaultDedicatedProfileDir(browserId) {
   return path.join(os.homedir(), '.web-access', `${browserId}-dedicated-profile`);
@@ -19,7 +20,8 @@ function defaultDedicatedProfileDir(browserId) {
 
 function parseArgs(argv) {
   const options = {
-    browser: process.env.BROWSER_MODE || 'main',
+    browser: null,
+    browserSpecified: false,
     browserId: process.env.BROWSER_ID || process.env.BROWSER_APP || null,
     dedicatedProfileDir: process.env.DEDICATED_PROFILE_DIR || null,
   };
@@ -28,6 +30,7 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === '--browser') {
       options.browser = argv[index + 1] || options.browser;
+      options.browserSpecified = true;
       index += 1;
       continue;
     }
@@ -43,21 +46,21 @@ function parseArgs(argv) {
     }
     if (arg === '--help' || arg === '-h') {
       console.log('Usage: node check-deps.mjs [--browser main|dedicated] [--browser-id <id>] [--dedicated-profile-dir <path>]');
+      console.log('Default behavior (no --browser): auto-pick mode. dedicated preferred when both available.');
       process.exit(0);
     }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  if (!['main', 'dedicated'].includes(options.browser)) {
+  if (options.browserSpecified && !['main', 'dedicated'].includes(options.browser)) {
     throw new Error(`Invalid browser mode: ${options.browser}`);
   }
-
 
   if (options.browser === 'dedicated') {
     if (!options.browserId) {
       throw new Error('Dedicated mode requires --browser-id <chrome|chrome-canary|chromium|brave|edge|arc>');
     }
-    if (!ALLOWED_BROWSER_IDS.has(options.browserId)) {
+    if (!ALLOWED_BROWSER_ID_SET.has(options.browserId)) {
       throw new Error(`Invalid browser id: ${options.browserId}`);
     }
     options.dedicatedProfileDir = options.dedicatedProfileDir || defaultDedicatedProfileDir(options.browserId);
@@ -67,8 +70,6 @@ function parseArgs(argv) {
 }
 
 const OPTIONS = parseArgs(process.argv.slice(2));
-
-// --- Node.js 版本检查 ---
 
 function checkNode() {
   const major = Number(process.versions.node.split('.')[0]);
@@ -80,8 +81,6 @@ function checkNode() {
   }
 }
 
-// --- TCP 端口探测 ---
-
 function checkPort(port, host = '127.0.0.1', timeoutMs = 2000) {
   return new Promise((resolve) => {
     const socket = net.createConnection(port, host);
@@ -91,14 +90,12 @@ function checkPort(port, host = '127.0.0.1', timeoutMs = 2000) {
   });
 }
 
-// --- 浏览器调试端口检测（DevToolsActivePort 多路径 + 常见端口回退） ---
-
-function activePortFiles() {
+function activePortFiles(browser, dedicatedProfileDir) {
   const home = os.homedir();
   const localAppData = process.env.LOCALAPPDATA || '';
   switch (os.platform()) {
     case 'darwin':
-      return OPTIONS.browser === 'main'
+      return browser === 'main'
         ? [
             path.join(home, 'Library/Application Support/Google/Chrome/DevToolsActivePort'),
             path.join(home, 'Library/Application Support/Google/Chrome Canary/DevToolsActivePort'),
@@ -107,33 +104,32 @@ function activePortFiles() {
             path.join(home, 'Library/Application Support/Microsoft Edge/DevToolsActivePort'),
             path.join(home, 'Library/Application Support/Arc/User Data/DevToolsActivePort'),
           ]
-        : [path.join(OPTIONS.dedicatedProfileDir, 'DevToolsActivePort')];
+        : [path.join(dedicatedProfileDir, 'DevToolsActivePort')];
     case 'linux':
-      return OPTIONS.browser === 'main'
+      return browser === 'main'
         ? [
             path.join(home, '.config/google-chrome/DevToolsActivePort'),
             path.join(home, '.config/chromium/DevToolsActivePort'),
             path.join(home, '.config/BraveSoftware/Brave-Browser/DevToolsActivePort'),
             path.join(home, '.config/microsoft-edge/DevToolsActivePort'),
           ]
-        : [path.join(OPTIONS.dedicatedProfileDir, 'DevToolsActivePort')];
+        : [path.join(dedicatedProfileDir, 'DevToolsActivePort')];
     case 'win32':
-      return OPTIONS.browser === 'main'
+      return browser === 'main'
         ? [
             path.join(localAppData, 'Google/Chrome/User Data/DevToolsActivePort'),
             path.join(localAppData, 'Chromium/User Data/DevToolsActivePort'),
             path.join(localAppData, 'BraveSoftware/Brave-Browser/User Data/DevToolsActivePort'),
             path.join(localAppData, 'Microsoft/Edge/User Data/DevToolsActivePort'),
           ]
-        : [path.join(OPTIONS.dedicatedProfileDir, 'DevToolsActivePort')];
+        : [path.join(dedicatedProfileDir, 'DevToolsActivePort')];
     default:
       return [];
   }
 }
 
-async function detectChromePort() {
-  // 优先从 DevToolsActivePort 文件读取
-  for (const filePath of activePortFiles()) {
+async function detectChromePort(browser, dedicatedProfileDir = '') {
+  for (const filePath of activePortFiles(browser, dedicatedProfileDir)) {
     try {
       const lines = fs.readFileSync(filePath, 'utf8').trim().split(/\r?\n/).filter(Boolean);
       const port = parseInt(lines[0], 10);
@@ -142,11 +138,11 @@ async function detectChromePort() {
       }
     } catch (_) {}
   }
-  if (OPTIONS.browser === 'dedicated') {
+
+  if (browser === 'dedicated') {
     return null;
   }
 
-  // 回退：探测常见端口
   for (const port of [9222, 9229, 9333]) {
     if (await checkPort(port)) {
       return port;
@@ -154,8 +150,6 @@ async function detectChromePort() {
   }
   return null;
 }
-
-// --- CDP Proxy 启动与等待 ---
 
 function httpGetJson(url, timeoutMs = 3000) {
   return fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
@@ -165,15 +159,15 @@ function httpGetJson(url, timeoutMs = 3000) {
     .catch(() => null);
 }
 
-function startProxyDetached() {
+function startProxyDetached(runtime) {
   const logFile = path.join(os.tmpdir(), 'cdp-proxy.log');
   const logFd = fs.openSync(logFile, 'a');
   const child = spawn(process.execPath, [PROXY_SCRIPT], {
     env: {
       ...process.env,
-      BROWSER_MODE: OPTIONS.browser,
-      BROWSER_ID: OPTIONS.browserId || '',
-      DEDICATED_PROFILE_DIR: OPTIONS.dedicatedProfileDir || '',
+      BROWSER_MODE: runtime.browser,
+      BROWSER_ID: runtime.browserId || '',
+      DEDICATED_PROFILE_DIR: runtime.dedicatedProfileDir || '',
     },
     detached: true,
     stdio: ['ignore', logFd, logFd],
@@ -183,7 +177,7 @@ function startProxyDetached() {
   fs.closeSync(logFd);
 }
 
-async function ensureProxy() {
+async function ensureProxy(runtime) {
   const healthUrl = `http://127.0.0.1:${PROXY_PORT}/health`;
   const shutdownUrl = `http://127.0.0.1:${PROXY_PORT}/shutdown`;
   const targetsUrl = `http://127.0.0.1:${PROXY_PORT}/targets`;
@@ -191,31 +185,28 @@ async function ensureProxy() {
   const health = await httpGetJson(healthUrl);
   if (
     health?.status === 'ok' &&
-    health.browserMode === OPTIONS.browser &&
+    health.browserMode === runtime.browser &&
     health.connected === true
   ) {
     console.log('proxy: ready');
     return true;
   }
 
-  if (health?.status === 'ok' && health.browserMode && health.browserMode !== OPTIONS.browser) {
-    console.log(`proxy: restarting from ${health.browserMode} to ${OPTIONS.browser}`);
+  if (health?.status === 'ok' && health.browserMode && health.browserMode !== runtime.browser) {
+    console.log(`proxy: restarting from ${health.browserMode} to ${runtime.browser}`);
     await httpGetJson(shutdownUrl, 2000);
     await new Promise((r) => setTimeout(r, 1000));
   }
 
-  // /targets 返回 JSON 数组即 ready
   const targets = await httpGetJson(targetsUrl);
   if (Array.isArray(targets)) {
     console.log('proxy: ready');
     return true;
   }
 
-  // 未运行或未连接，启动并等待
   console.log('proxy: connecting...');
-  startProxyDetached();
+  startProxyDetached(runtime);
 
-  // 等 proxy 进程就绪
   await new Promise((r) => setTimeout(r, 2000));
 
   for (let i = 1; i <= 15; i++) {
@@ -225,7 +216,7 @@ async function ensureProxy() {
       return true;
     }
     if (i === 1) {
-      if (OPTIONS.browser === 'main') {
+      if (runtime.browser === 'main') {
         console.log('⚠️  main browser 模式下，可能有远程调试授权弹窗，请点击「允许」后等待连接...');
       } else {
         console.log('⚠️  专用浏览器模式下通常不会有授权弹窗；若持续超时，请检查 dedicated profile 路径和启动参数是否一致。');
@@ -239,31 +230,90 @@ async function ensureProxy() {
   return false;
 }
 
-// --- main ---
+function preferredDedicatedIds() {
+  const preferred = [];
+  if (OPTIONS.browserId && ALLOWED_BROWSER_ID_SET.has(OPTIONS.browserId)) {
+    preferred.push(OPTIONS.browserId);
+  }
+  for (const id of ALLOWED_BROWSER_IDS) {
+    if (!preferred.includes(id)) preferred.push(id);
+  }
+  return preferred;
+}
+
+async function detectFirstDedicatedAvailable() {
+  for (const browserId of preferredDedicatedIds()) {
+    const profile = defaultDedicatedProfileDir(browserId);
+    const port = await detectChromePort('dedicated', profile);
+    if (port) {
+      return { browser: 'dedicated', browserId, dedicatedProfileDir: profile, port };
+    }
+  }
+  return null;
+}
+
+async function resolveRuntime() {
+  if (OPTIONS.browserSpecified) {
+    if (OPTIONS.browser === 'main') {
+      const port = await detectChromePort('main');
+      if (!port) {
+        console.log('browser: not connected (main mode)');
+        console.log('请先开启 main browser 的远程调试，或改为 dedicated 模式。');
+        return null;
+      }
+      return { browser: 'main', browserId: null, dedicatedProfileDir: null, port };
+    }
+
+    const dedicatedProfileDir = OPTIONS.dedicatedProfileDir || defaultDedicatedProfileDir(OPTIONS.browserId);
+    const port = await detectChromePort('dedicated', dedicatedProfileDir);
+    if (!port) {
+      console.log('browser: not connected (dedicated mode)');
+      console.log('请先启动专用浏览器，或检查 dedicated profile 路径是否正确：');
+      console.log(`  browserId: ${OPTIONS.browserId}`);
+      console.log(`  profile: ${dedicatedProfileDir}`);
+      return null;
+    }
+    return { browser: 'dedicated', browserId: OPTIONS.browserId, dedicatedProfileDir, port };
+  }
+
+  const mainPort = await detectChromePort('main');
+  const dedicated = await detectFirstDedicatedAvailable();
+
+  if (mainPort && dedicated) {
+    console.log(`browser: both available (main + dedicated:${dedicated.browserId}) -> selected dedicated`);
+    return dedicated;
+  }
+  if (dedicated) {
+    console.log(`browser: dedicated available (${dedicated.browserId}) -> selected dedicated`);
+    return dedicated;
+  }
+  if (mainPort) {
+    console.log('browser: only main available -> selected main');
+    return { browser: 'main', browserId: null, dedicatedProfileDir: null, port: mainPort };
+  }
+
+  console.log('browser: none available');
+  console.log('请让用户选择浏览器模式后再继续：');
+  console.log('- 选主力浏览器：先在主力浏览器开启 remote debugging，然后重跑 check-deps。');
+  console.log('- 选专用浏览器：先启动 dedicated profile（带 --remote-debugging-port），再重跑 check-deps。');
+  return null;
+}
 
 async function main() {
   checkNode();
 
-  const chromePort = await detectChromePort();
-  if (!chromePort) {
-    if (OPTIONS.browser === 'main') {
-      console.log('browser: not connected (main mode) — 请先让用户决定：开启当前 main browser 的远程调试，或明确切换到专用浏览器；不要自动改走专用浏览器路径。');
-    } else {
-      console.log('browser: not connected (dedicated mode)');
-      console.log('请先启动专用浏览器，或检查 dedicated profile 路径是否正确：');
-      console.log(`  browserId: ${OPTIONS.browserId}`);
-      console.log(`  profile: ${OPTIONS.dedicatedProfileDir}`);
-    }
+  const runtime = await resolveRuntime();
+  if (!runtime) {
     process.exit(1);
   }
-  console.log(`browser: ok (port ${chromePort}, ${OPTIONS.browser} mode)`);
 
-  const proxyOk = await ensureProxy();
+  console.log(`browser: ok (port ${runtime.port}, ${runtime.browser} mode${runtime.browserId ? `, ${runtime.browserId}` : ''})`);
+
+  const proxyOk = await ensureProxy(runtime);
   if (!proxyOk) {
     process.exit(1);
   }
 
-  // 列出已有站点经验
   const patternsDir = path.join(ROOT, 'references', 'site-patterns');
   try {
     const sites = fs.readdirSync(patternsDir)
@@ -273,7 +323,6 @@ async function main() {
       console.log(`\nsite-patterns: ${sites.join(', ')}`);
     }
   } catch {}
-
 }
 
 await main();
