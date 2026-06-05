@@ -60,6 +60,7 @@ open -na "<Browser App Name>" --args \
 补充约束：
 
 - **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
+- **依赖模型**：本地 CDP 浏览器（primary/dedicated）走纯 CDP，零 npm 依赖，`git clone` 后开箱即用。**仅 Browserbase 云浏览器模式**需要 `playwright-core`；它在 `createRuntime` 进入 browserbase 分支时动态加载。若任务用云浏览器且报 `PLAYWRIGHT_CORE_MISSING`（HTTP 503），在 skill 根目录运行 `npm install`（已在 `package.json` 中声明为 optionalDependency）后重试，不影响本地模式。
 - 自动检查不做跨 session 偏好记忆；依据当前可用连接实时判断（主力 `DevToolsActivePort` + `~/.web-access/*-dedicated-profile`）。
 - 自动检查只根据 `DevToolsActivePort` 判断连接状态，不扫描硬编码端口。
 

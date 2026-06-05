@@ -445,6 +445,20 @@ Example:
 git clone https://github.com/hcsum/web-access ~/.claude/skills/web-access
 ```
 
+### Dependencies
+
+Local browsers (primary / dedicated) use direct CDP and require **no npm install** — clone and go.
+
+Only the cloud (Browserbase) provider needs `playwright-core`. It is declared as an
+optional dependency, so if you intend to use cloud mode, run an install once in the skill root:
+
+```bash
+cd ~/.claude/skills/web-access && npm install
+```
+
+If a cloud session is started without it, the runtime fails fast with a
+`PLAYWRIGHT_CORE_MISSING` error explaining exactly what to install.
+
 ## License
 
 MIT
