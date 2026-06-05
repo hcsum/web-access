@@ -111,13 +111,22 @@ Run the usual preflight; when the cloud provider is active the JSON reports `pro
 
 ## Quick start
 
+Ask your agent to install this skill. It can do that itself — clone the repo into the skills directory and run preflight:
+
 ```bash
 git clone https://github.com/hcsum/web-access ~/.claude/skills/web-access
-cd ~/.claude/skills/web-access
-node ./scripts/check-deps.mjs
+node ~/.claude/skills/web-access/scripts/check-deps.mjs
 ```
 
-If the returned JSON says `ok: true`, the agent can continue and drive the browser through the proxy.
+(If the agent doesn't pick up the new skill right away, reload its session so the skill directory is rescanned.)
+
+When preflight returns `ok: true`, the agent can drive the browser through the proxy. There's one step it **can't** do for you: a CDP-accessible browser has to exist first. Preflight detects browsers — it doesn't create them — so if it reports `ok: false` with no browser available, make one available and re-run it:
+
+- **enable remote debugging** in your everyday browser → `primary` mode
+- **launch a dedicated automation profile** → `dedicated` mode
+- **set Browserbase credentials** → `browserbase` provider (the right choice for headless or remote agent environments)
+
+See [Setup](#setup) for each. Once a browser is reachable, re-running preflight gives `ok: true` and the agent is ready.
 
 ## Dependencies
 
