@@ -1,217 +1,35 @@
 #!/usr/bin/env node
-// 环境检查 + 确保 CDP Proxy 就绪（跨平台，替代 check-deps.sh）
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { loadRuntimeConfig, resolveRuntimeAvailability } from './browser-runtime/index.mjs';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PROXY_SCRIPT = path.join(ROOT, 'scripts', 'cdp-proxy.mjs');
 const PROXY_PORT = Number(process.env.CDP_PROXY_PORT || 3456);
-const ALLOWED_BROWSER_IDS = new Set(['chrome', 'chrome-canary', 'chromium', 'brave', 'edge', 'arc']);
-const BROWSER_ID_ORDER = ['chrome', 'chrome-canary', 'chromium', 'brave', 'edge', 'arc'];
 
-function defaultDedicatedProfileDir(browserId) {
-  return path.join(os.homedir(), '.web-access', `${browserId}-dedicated-profile`);
+function printJson(result) {
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
-function parseArgs(argv) {
-  const options = {
-    browser: process.env.BROWSER_MODE || 'auto',
-    browserId: process.env.BROWSER_ID || process.env.BROWSER_APP || null,
-    dedicatedProfileDir: process.env.DEDICATED_PROFILE_DIR || null,
-  };
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === '--browser') {
-      options.browser = argv[index + 1] || options.browser;
-      index += 1;
-      continue;
-    }
-    if (arg === '--browser-id' || arg === '--browser-app') {
-      options.browserId = argv[index + 1] || options.browserId;
-      index += 1;
-      continue;
-    }
-    if (arg === '--dedicated-profile-dir') {
-      options.dedicatedProfileDir = argv[index + 1] || options.dedicatedProfileDir;
-      index += 1;
-      continue;
-    }
-    if (arg === '--help' || arg === '-h') {
-      console.log('Usage: node check-deps.mjs [--browser auto|primary|dedicated] [--browser-id <id>] [--dedicated-profile-dir <path>]');
-      process.exit(0);
-    }
-    throw new Error(`Unknown argument: ${arg}`);
-  }
-
-  if (!['auto', 'primary', 'dedicated'].includes(options.browser)) {
-    throw new Error(`Invalid browser mode: ${options.browser}`);
-  }
-
-  if (options.browser === 'dedicated') {
-    if (!options.browserId) {
-      throw new Error('Dedicated mode requires --browser-id <chrome|chrome-canary|chromium|brave|edge|arc>');
-    }
-    if (!ALLOWED_BROWSER_IDS.has(options.browserId)) {
-      throw new Error(`Invalid browser id: ${options.browserId}`);
-    }
-    options.dedicatedProfileDir = options.dedicatedProfileDir || defaultDedicatedProfileDir(options.browserId);
-  }
-
-  return options;
+function fail(result, exitCode = 1) {
+  printJson({ ok: false, ...result });
+  process.exit(exitCode);
 }
-
-const OPTIONS = parseArgs(process.argv.slice(2));
-
-function modeArgs(options) {
-  if (options.browser === 'dedicated') {
-    return `--browser dedicated --browser-id ${options.browserId}`;
-  }
-  return '--browser primary';
-}
-
-// --- Node.js 版本检查 ---
 
 function checkNode() {
   const major = Number(process.versions.node.split('.')[0]);
   const version = `v${process.versions.node}`;
-  if (major >= 22) {
-    console.log(`node: ok (${version})`);
-  } else {
-    console.log(`node: warn (${version}, 建议升级到 22+)`);
-  }
-}
-
-// --- TCP 端口探测 ---
-
-function checkPort(port, host = '127.0.0.1', timeoutMs = 2000) {
-  return new Promise((resolve) => {
-    const socket = net.createConnection(port, host);
-    const timer = setTimeout(() => { socket.destroy(); resolve(false); }, timeoutMs);
-    socket.once('connect', () => { clearTimeout(timer); socket.destroy(); resolve(true); });
-    socket.once('error', () => { clearTimeout(timer); resolve(false); });
-  });
-}
-
-// --- 浏览器调试端口检测（DevToolsActivePort 多路径 + 常见端口回退） ---
-
-function activePortFiles(mode, dedicatedProfileDir) {
-  const home = os.homedir();
-  const localAppData = process.env.LOCALAPPDATA || '';
-  switch (os.platform()) {
-    case 'darwin':
-      return mode === 'primary'
-        ? [
-            path.join(home, 'Library/Application Support/Google/Chrome/DevToolsActivePort'),
-            path.join(home, 'Library/Application Support/Google/Chrome Canary/DevToolsActivePort'),
-            path.join(home, 'Library/Application Support/Chromium/DevToolsActivePort'),
-            path.join(home, 'Library/Application Support/BraveSoftware/Brave-Browser/DevToolsActivePort'),
-            path.join(home, 'Library/Application Support/Microsoft Edge/DevToolsActivePort'),
-            path.join(home, 'Library/Application Support/Arc/User Data/DevToolsActivePort'),
-          ]
-        : [path.join(dedicatedProfileDir, 'DevToolsActivePort')];
-    case 'linux':
-      return mode === 'primary'
-        ? [
-            path.join(home, '.config/google-chrome/DevToolsActivePort'),
-            path.join(home, '.config/chromium/DevToolsActivePort'),
-            path.join(home, '.config/BraveSoftware/Brave-Browser/DevToolsActivePort'),
-            path.join(home, '.config/microsoft-edge/DevToolsActivePort'),
-          ]
-        : [path.join(dedicatedProfileDir, 'DevToolsActivePort')];
-    case 'win32':
-      return mode === 'primary'
-        ? [
-            path.join(localAppData, 'Google/Chrome/User Data/DevToolsActivePort'),
-            path.join(localAppData, 'Chromium/User Data/DevToolsActivePort'),
-            path.join(localAppData, 'BraveSoftware/Brave-Browser/User Data/DevToolsActivePort'),
-            path.join(localAppData, 'Microsoft/Edge/User Data/DevToolsActivePort'),
-          ]
-        : [path.join(dedicatedProfileDir, 'DevToolsActivePort')];
-    default:
-      return [];
-  }
-}
-
-async function detectChromePort(options) {
-  const files = activePortFiles(options.browser, options.dedicatedProfileDir);
-  for (const filePath of files) {
-    try {
-      const lines = fs.readFileSync(filePath, 'utf8').trim().split(/\r?\n/).filter(Boolean);
-      const port = parseInt(lines[0], 10);
-      if (port > 0 && port < 65536 && await checkPort(port)) {
-        return port;
-      }
-    } catch (_) {}
-  }
-  return null;
-}
-
-async function detectDedicatedCandidates() {
-  const connected = [];
-  for (const browserId of BROWSER_ID_ORDER) {
-    const profileDir = defaultDedicatedProfileDir(browserId);
-    if (!fs.existsSync(profileDir)) {
-      continue;
-    }
-    const probe = {
-      browser: 'dedicated',
-      browserId,
-      dedicatedProfileDir: profileDir,
-    };
-    const port = await detectChromePort(probe);
-    if (port) {
-      connected.push({ browserId, dedicatedProfileDir: profileDir, port });
-    }
-  }
-  return connected;
-}
-
-async function resolveAutoBrowser() {
-  const primaryProbe = { browser: 'primary', browserId: null, dedicatedProfileDir: null };
-  const primaryPort = await detectChromePort(primaryProbe);
-  const dedicatedConnected = await detectDedicatedCandidates();
-
-  if (dedicatedConnected.length > 0) {
-    const selected = dedicatedConnected[0];
-    return {
-      selected: {
-        browser: 'dedicated',
-        browserId: selected.browserId,
-        dedicatedProfileDir: selected.dedicatedProfileDir,
-        port: selected.port,
-      },
-      primaryPort,
-      dedicatedConnected,
-    };
-  }
-
-  if (primaryPort) {
-    return {
-      selected: {
-        browser: 'primary',
-        browserId: null,
-        dedicatedProfileDir: null,
-        port: primaryPort,
-      },
-      primaryPort,
-      dedicatedConnected,
-    };
-  }
-
   return {
-    selected: null,
-    primaryPort,
-    dedicatedConnected,
+    ok: major >= 22,
+    version,
+    recommendation: major >= 22 ? null : '建议升级到 22+',
   };
 }
-
-// --- CDP Proxy 启动与等待 ---
 
 function httpGetJson(url, timeoutMs = 3000) {
   return fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
@@ -221,15 +39,16 @@ function httpGetJson(url, timeoutMs = 3000) {
     .catch(() => null);
 }
 
-function startProxyDetached(options) {
+function startProxyDetached(config) {
   const logFile = path.join(os.tmpdir(), 'cdp-proxy.log');
   const logFd = fs.openSync(logFile, 'a');
   const child = spawn(process.execPath, [PROXY_SCRIPT], {
     env: {
       ...process.env,
-      BROWSER_MODE: options.browser,
-      BROWSER_ID: options.browserId || '',
-      DEDICATED_PROFILE_DIR: options.dedicatedProfileDir || '',
+      BROWSER_PROVIDER: config.provider,
+      BROWSER_MODE: config.browserMode || '',
+      BROWSER_ID: config.browserId || '',
+      DEDICATED_PROFILE_DIR: config.dedicatedProfileDir || '',
     },
     detached: true,
     stdio: ['ignore', logFd, logFd],
@@ -239,7 +58,7 @@ function startProxyDetached(options) {
   fs.closeSync(logFd);
 }
 
-async function ensureProxy(options) {
+async function ensureProxy(config) {
   const healthUrl = `http://127.0.0.1:${PROXY_PORT}/health`;
   const shutdownUrl = `http://127.0.0.1:${PROXY_PORT}/shutdown`;
   const targetsUrl = `http://127.0.0.1:${PROXY_PORT}/targets`;
@@ -247,125 +66,132 @@ async function ensureProxy(options) {
   const health = await httpGetJson(healthUrl);
   if (
     health?.status === 'ok' &&
-    health.browserMode === options.browser &&
+    health.provider === config.provider &&
+    health.browserMode === (config.browserMode || config.provider) &&
     health.connected === true
   ) {
-    console.log('proxy: ready');
-    return true;
+    return { ok: true, reusedExisting: true, restartedForModeSwitch: false };
   }
 
-  if (health?.status === 'ok' && health.browserMode && health.browserMode !== options.browser) {
-    console.log(`proxy: restarting from ${health.browserMode} to ${options.browser}`);
+  let restartedForModeSwitch = false;
+  if (
+    health?.status === 'ok' &&
+    ((health.provider && health.provider !== config.provider) ||
+      (health.browserMode && health.browserMode !== (config.browserMode || config.provider)))
+  ) {
     await httpGetJson(shutdownUrl, 2000);
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    restartedForModeSwitch = true;
   }
 
-  // /targets 返回 JSON 数组即 ready
   const targets = await httpGetJson(targetsUrl);
   if (Array.isArray(targets)) {
-    console.log('proxy: ready');
-    return true;
+    return { ok: true, reusedExisting: true, restartedForModeSwitch };
   }
 
-  // 未运行或未连接，启动并等待
-  console.log('proxy: connecting...');
-  startProxyDetached(options);
+  startProxyDetached(config);
+  await new Promise((resolve) => setTimeout(resolve, 2000));
 
-  // 等 proxy 进程就绪
-  await new Promise((r) => setTimeout(r, 2000));
-
-  for (let i = 1; i <= 15; i++) {
+  let hint = null;
+  for (let i = 1; i <= 15; i += 1) {
     const result = await httpGetJson(targetsUrl, 8000);
     if (Array.isArray(result)) {
-      console.log('proxy: ready');
-      return true;
+      return { ok: true, reusedExisting: false, restartedForModeSwitch, hint };
     }
     if (i === 1) {
-      if (options.browser === 'primary') {
-        console.log('⚠️  主力浏览器模式下，可能有远程调试授权弹窗，请点击「允许」后等待连接...');
-      } else {
-        console.log('⚠️  专用浏览器模式下通常不会有授权弹窗；若持续超时，请检查 dedicated profile 路径和启动参数是否一致。');
-      }
+      hint = config.provider === 'browserbase'
+        ? 'Browserbase 模式下若持续超时，请检查云浏览器凭据与项目配置是否有效，以及云端网络是否可访问 api.browserbase.com。'
+        : config.browserMode === 'primary'
+          ? '主力浏览器模式下，可能有远程调试授权弹窗，请点击“允许”后等待连接。'
+          : '专用浏览器模式下通常不会有授权弹窗；若持续超时，请检查 dedicated profile 路径和启动参数是否一致。';
     }
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
-  console.log('❌ 连接超时，请检查浏览器调试设置');
-  console.log(`  日志：${path.join(os.tmpdir(), 'cdp-proxy.log')}`);
-  return false;
+  return {
+    ok: false,
+    reusedExisting: false,
+    restartedForModeSwitch,
+    hint,
+    reason: 'proxy_connect_timeout',
+    logFile: path.join(os.tmpdir(), 'cdp-proxy.log'),
+  };
 }
 
-// --- main ---
+function parseCliFlags(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === '--browser' && argv[i + 1]) out.BROWSER_MODE = argv[++i];
+    else if (argv[i] === '--browser-id' && argv[i + 1]) out.BROWSER_ID = argv[++i];
+  }
+  return out;
+}
 
 async function main() {
-  checkNode();
+  const node = checkNode();
+  const config = loadRuntimeConfig({ ...process.env, ...parseCliFlags(process.argv.slice(2)) });
+  const runtime = await resolveRuntimeAvailability(config);
 
-  let runtime = {
-    browser: OPTIONS.browser,
-    browserId: OPTIONS.browserId,
-    dedicatedProfileDir: OPTIONS.dedicatedProfileDir,
-    port: null,
-  };
-
-  if (OPTIONS.browser === 'auto') {
-    const autoResult = await resolveAutoBrowser();
-    if (!autoResult.selected) {
-      console.log('browser: not connected (auto mode)');
-      console.log('未检测到可用的主力浏览器或专用 profile。请让用户选择模式后再继续。');
-      process.exit(1);
-    }
-
-    runtime = {
-      browser: autoResult.selected.browser,
-      browserId: autoResult.selected.browserId,
-      dedicatedProfileDir: autoResult.selected.dedicatedProfileDir,
-      port: autoResult.selected.port,
-    };
-
-    if (autoResult.primaryPort && autoResult.dedicatedConnected.length > 0) {
-      console.log(`browser: auto-selected dedicated (${runtime.browserId}) because both primary and dedicated are available`);
-    } else if (runtime.browser === 'dedicated') {
-      console.log(`browser: auto-selected dedicated (${runtime.browserId})`);
-    } else {
-      console.log('browser: auto-selected primary');
-    }
-    console.log(`selection: ${modeArgs(runtime)}`);
+  if (!runtime.ok) {
+    fail({
+      node,
+      provider: runtime.provider,
+      proxyReady: false,
+      ...runtime,
+    });
   }
 
-  const chromePort = runtime.port || await detectChromePort(runtime);
-  if (!chromePort) {
-    if (runtime.browser === 'primary') {
-      console.log('browser: not connected (primary mode) — 请先让用户决定：开启当前主力浏览器的远程调试，或明确切换到专用浏览器；不要自动改走专用浏览器路径。');
-    } else {
-      console.log('browser: not connected (dedicated mode)');
-      console.log('请先启动专用浏览器，或检查 dedicated profile 路径是否正确：');
-      console.log(`  browserId: ${runtime.browserId}`);
-      console.log(`  profile: ${runtime.dedicatedProfileDir}`);
-    }
-    process.exit(1);
-  }
-  if (runtime.browser === 'dedicated') {
-    console.log(`browser: ok (port ${chromePort}, dedicated mode, browser-id ${runtime.browserId})`);
-  } else {
-    console.log(`browser: ok (port ${chromePort}, primary mode)`);
+  config.provider = runtime.provider;
+  config.browserMode = runtime.browser;
+  config.browserId = runtime.browserId;
+  config.dedicatedProfileDir = runtime.dedicatedProfileDir;
+
+  const proxy = await ensureProxy(config);
+  if (!proxy.ok) {
+    fail({
+      node,
+      provider: runtime.provider,
+      selectedMode: runtime.browser,
+      browserId: runtime.browserId,
+      dedicatedProfileDir: runtime.dedicatedProfileDir,
+      port: runtime.port,
+      availableModes: runtime.availableModes,
+      selectedBecause: runtime.selectedBecause,
+      proxyReady: false,
+      proxy,
+    });
   }
 
-  const proxyOk = await ensureProxy(runtime);
-  if (!proxyOk) {
-    process.exit(1);
-  }
-
-  // 列出已有站点经验
   const patternsDir = path.join(ROOT, 'references', 'site-patterns');
+  let sitePatterns = [];
   try {
-    const sites = fs.readdirSync(patternsDir)
-      .filter(f => f.endsWith('.md'))
-      .map(f => f.replace(/\.md$/, ''));
-    if (sites.length) {
-      console.log(`\nsite-patterns: ${sites.join(', ')}`);
-    }
+    sitePatterns = fs.readdirSync(patternsDir)
+      .filter((f) => f.endsWith('.md'))
+      .map((f) => f.replace(/\.md$/, ''));
   } catch {}
 
+  printJson({
+    ok: true,
+    node,
+    provider: runtime.provider,
+    availableModes: runtime.availableModes,
+    selectedMode: runtime.browser,
+    selectedBecause: runtime.selectedBecause,
+    browserId: runtime.browserId,
+    dedicatedProfileDir: runtime.dedicatedProfileDir,
+    port: runtime.port,
+    proxyReady: true,
+    proxy,
+    sitePatterns,
+  });
 }
 
-await main();
+try {
+  await main();
+} catch (error) {
+  fail({
+    reason: 'unexpected_error',
+    message: error instanceof Error ? error.message : String(error),
+    proxyReady: false,
+  });
+}

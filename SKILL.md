@@ -1,37 +1,40 @@
 ---
 name: web-access
-license: MIT
-github: https://github.com/eze-is/web-access
-description:
-  所有联网操作必须通过此 skill 处理，包括：搜索、网页抓取、登录后操作、网络交互等。
-  触发场景：用户要求搜索信息、查看网页内容、访问需要登录的网站、操作网页界面、抓取社交媒体内容（小红书、微博、推特等）、读取动态渲染页面、以及任何需要真实浏览器环境的网络任务。
-metadata:
-  author: 一泽Eze
-  version: "2.6.0"
+description: 所有联网操作必须通过此 skill 处理，包括：搜索、网页抓取、登录后操作、网络交互等。
 ---
 
 # web-access Skill
 
 ## 前置检查
 
-在开始联网操作前，先判断这次浏览器任务更适合哪种模式，并优先说明这条核心差异：
+默认先运行自动检查命令：
+
+```bash
+# The script path is relative to this skill's base directory printed by the skill tool.
+node ./scripts/check-deps.mjs
+```
+
+脚本输出约定：
+
+- `check-deps.mjs` 始终输出单个 JSON 对象。
+- 是否已经有浏览器可用，以 `ok` 为准，不要自己猜。
+- `ok: true` 表示当前已经有可用浏览器路径，直接继续任务，不要先让用户选模式。
+- `ok: false` 表示当前不可直接用，再读取 `reason` 和 `guidance`，进入浏览器模式引导。
+- `provider` 表示当前实际使用的是哪类浏览器提供方；`local` 表示本地 CDP 浏览器，`browserbase` 表示 Browserbase 云浏览器。
+- `selectedMode` 表示当前实际要使用的模式；只在 `ok: true` 时按它继续。
+- `browserId`、`port`、`proxyReady`、`availableModes`、`selectedBecause` 是补充信息。
+- 不要依赖类似 `browser: ok`、`proxy: ready` 这类文本。
+- `sitePatterns` 字段列出当前已有的站点经验文件名。
+
+根据返回值决定下一步：
+
+- 若 `ok: true`：直接使用当前可用模式继续任务，不询问用户选模式。
+- 若 `ok: false`：再进入浏览器模式引导，向用户说明差异并让用户选择。
+
+只有在需要用户介入时，才解释这条核心差异：
 
 - **主力浏览器**：可能需要用户人工确认远程调试授权；自动继承现有登录态、书签、插件。
 - **专用浏览器**：配置完成后日常运行通常不需要用户人工确认 debug access；与主力浏览器完全隔离。
-
-如果用户未明确指定，再进入浏览器模式引导。不能只让用户做二选一，必须先讲清差异、收益和代价。
-
-默认先运行自动检查命令（同时检查主力与专用 profile）：
-
-```bash
-node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
-```
-
-自动检查行为：
-
-- 若主力或专用任一可用：直接返回 ok，不询问。
-- 若主力和专用都可用：默认走专用浏览器。
-- 若都不可用：再进入浏览器模式引导询问用户。
 
 如果用户明确要用专用浏览器，先只问一次他要用哪个浏览器，然后把选择映射成稳定的 `browser-id`：
 
@@ -52,54 +55,17 @@ open -na "<Browser App Name>" --args \
   --user-data-dir="$HOME/.web-access/<browser-id>-dedicated-profile"
 ```
 
-然后运行：
-
-```bash
-node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --browser-id <browser-id>
-```
-
-一旦已经选定专用浏览器，后续所有检查和连接都必须继续带上 `--browser dedicated --browser-id <browser-id>`，不要再运行默认检查命令，否则流程可能被带回主力浏览器路径。
+用户确认已启动后，重新运行默认检查命令，确认专用浏览器路径已经可用。
 
 补充约束：
 
 - **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
 - 自动检查不做跨 session 偏好记忆；依据当前可用连接实时判断（主力 `DevToolsActivePort` + `~/.web-access/*-dedicated-profile`）。
-
-检查通过后并必须在回复中向用户直接展示以下须知，再启动 CDP Proxy 执行操作：
-
-```
-温馨提示：部分站点对浏览器自动化操作检测严格，存在账号封禁风险。已内置防护措施但无法完全避免，Agent 继续操作即视为接受。
-```
-
-## 浏览哲学
-
-**像人一样思考，兼顾高效与适应性的完成任务。**
-
-执行任务时不会过度依赖固有印象所规划的步骤，而是带着目标进入，边看边判断，遇到阻碍就解决，发现内容不够就深入——全程围绕「我要达成什么」做决策。这个 skill 的所有行为都应遵循这个逻辑。
-
-**① 拿到请求** — 先明确用户要做什么，定义成功标准：什么算完成了？需要获取什么信息、执行什么操作、达到什么结果？这是后续所有判断的锚点。
-
-**② 选择起点** — 根据任务性质、平台特征、达成条件，选一个最可能直达的方式作为第一步去验证。一次成功当然最好；不成功则在③中调整。比如，需要操作页面、需要登录态、已知静态方式不可达的平台（小红书、微信公众号等）→ 直接 CDP
-
-**③ 过程校验** — 每一步的结果都是证据，不只是成功或失败的二元信号。用结果对照①的成功标准，更新你对目标的判断：路径在推进吗？结果的整体面貌（质量、相关度、量级）是否指向目标可达？发现方向错了立即调整，不在同一个方式上反复重试——搜索没命中不等于"还没找对方法"，也可能是"目标不存在"；API 报错、页面缺少预期元素、重试无改善，都是在告诉你该重新评估方向。遇到弹窗、登录墙等障碍，判断它是否真的挡住了目标：挡住了就处理，没挡住就绕过——内容可能已在页面 DOM 中，交互只是展示手段。
-
-**④ 完成判断** — 对照定义的任务成功标准，确认任务完成后才停止，但也不要过度操作，不为了"完整"而浪费代价。
+- 自动检查只根据 `DevToolsActivePort` 判断连接状态，不扫描硬编码端口。
 
 ## 联网工具选择
 
-- **确保信息的真实性，一手信息优于二手信息**：搜索引擎和聚合平台是信息发现入口。当多次搜索尝试后没有质的改进时，升级到更根本的获取方式：定位一手来源（官网、官方平台、原始页面）。
-
-| 场景 | 工具 |
-|------|------|
-| 搜索摘要或关键词结果，发现信息来源 | **WebSearch** |
-| URL 已知，需要从页面定向提取特定信息 | **WebFetch**（拉取网页内容，由小模型根据 prompt 提取，返回处理后结果） |
-| URL 已知，需要原始 HTML 源码（meta、JSON-LD 等结构化字段） | **curl** |
-| 非公开内容，或已知静态层无效的平台（小红书、微信公众号等公开内容也被反爬限制） | **浏览器 CDP**（直接，跳过静态层） |
-| 需要登录态、交互操作，或需要像人一样在浏览器内自由导航探索 | **浏览器 CDP** |
-
-浏览器 CDP 不要求 URL 已知——可从任意入口出发，通过页面内搜索、点击、跳转等方式找到目标内容。WebSearch、WebFetch、curl 均不处理登录态。
-
-**Jina**（可选预处理层，可与 WebFetch/curl 组合使用，由于其特性可节省 tokens 消耗，请积极在任务合适时组合使用）：第三方网络服务，可将网页转为 Markdown，大幅节省 token 但可能有信息损耗。调用方式为 `r.jina.ai/example.com`（URL 前加前缀，不保留原网址 http 前缀），限 20 RPM。适合文章、博客、文档、PDF 等以正文为核心的页面；对数据面板、商品页等非文章结构页面可能提取到错误区块。
+浏览器 CDP 不要求 URL 已知——可从任意入口出发，通过页面内搜索、点击、跳转等方式找到目标内容。
 
 进入浏览器层后，`/eval` 就是你的眼睛和手：
 
@@ -114,7 +80,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --browser-
 用户指向**本人访问过的页面**（"我之前看的那个讲 X 的文章"、"上次打开过的 XX 面板"）或**组织内部系统**（"我们的 XX 平台"、"公司那个 YY 系统"等公网搜不到的目标）时，检索本地 Chrome 书签/历史：
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks|history] [--limit N] [--since 1d|7h|YYYY-MM-DD] [--sort recent|visits]
+node ./scripts/find-url.mjs [关键词...] [--only bookmarks|history] [--limit N] [--since 1d|7h|YYYY-MM-DD] [--sort recent|visits]
 ```
 
 关键词空格分词、多词 AND，匹配 title + url（可省略）；`--since` / `--sort` 仅作用于历史；默认按最近访问倒序，`--sort visits` 按访问次数排序（适合"高频访问的网站"这类场景）。
@@ -180,27 +146,49 @@ node "${CLAUDE_SKILL_DIR}/scripts/find-url.mjs" [关键词...] [--only bookmarks
 
 ### 启动
 
-优先使用自动检查（推荐）：
+自动选择路径：
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
+node ./scripts/check-deps.mjs
 ```
 
-该命令会先检查主力，再检查专用 profile；若两者都可用默认走专用。
+返回的 JSON 中：
 
-主力浏览器路径：
+- `provider: "local"` 表示当前走的是本地 CDP 浏览器。
+- `provider: "browserbase"` 表示当前走的是 Browserbase 云浏览器。
+- `selectedMode: "primary"` 表示当前选中了主力浏览器。
+- `selectedMode: "dedicated"` 表示当前选中了专用浏览器。
+- 默认命令不是“固定走主力浏览器”，而是自动在可用连接里选择；两者都可用时优先 dedicated。
+
+显式主力浏览器路径：
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
+node ./scripts/check-deps.mjs --browser primary
 ```
 
 专用浏览器路径：
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --browser-id <browser-id>
+node ./scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>
 ```
 
-脚本会依次检查 Node.js、浏览器调试端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。
+脚本会检查 Node.js、浏览器调试端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。所有检查结果都在 JSON 字段里返回。
+
+### 何时主动切到主力浏览器
+
+默认走 dedicated 即可。但任务需要**主力浏览器里特有的登录态/会话**时，必须显式 `--browser primary`，否则自动选模式会选到 dedicated，看不到目标内容。典型触发：
+
+- 用户已在主力浏览器打开了目标页面（如 Ahrefs / Semrush / GSC dashboard / 内部公司系统），且让你读取那里的数据
+- 任务依赖主力浏览器里登录的付费 SaaS（dedicated profile 没登录）
+- 用户明确说 "用主力浏览器" / "use my main browser"
+
+切换是 proxy 全局状态切换：调 `--browser primary` 会 shutdown 当前 proxy 再起一个连主力。代价：
+
+- 之前 dedicated 上拿到的 targetId 全部失效，需要重新拿 tab
+- 浏览器本身的登录态/cookie 不动
+- Proxy 同一时刻只能指向一个浏览器，不能并行
+
+任务做完如需回到 dedicated，再次显式 `--browser dedicated`。
 
 ### Proxy API
 
@@ -280,33 +268,15 @@ curl -s "http://localhost:3456/close?target=ID"
 
 登录完成后无需重启任何东西，直接刷新页面继续。若使用专用浏览器，后续同一 profile 会保留该登录态。
 
-### 任务结束
+### 任务结束，失败，或中断
 
-用 `/close` 关闭自己创建的 tab，必须保留用户原有的 tab 不受影响。
+用 `/close` 关闭自己创建的 tab，**必须**保留用户原有的 tab 不受影响。
 
-Proxy 持续运行，不建议主动停止——重启后需要在浏览器中重新授权 CDP 连接。
+如果 `provider` 不是 `local`，**必须**调用 shutdown 释放远程浏览器 session。不要把这一步当作可选清理；它是任务完成、失败、或中途放弃前都必须执行的硬约束。
 
-## 并行调研：子 Agent 分治策略
-
-任务包含多个**独立**调研目标时（如同时调研 N 个项目、N 个来源），鼓励合理分治给子 Agent 并行执行，而非主 Agent 串行处理。
-
-**好处：**
-- **速度**：多子 Agent 并行，总耗时约等于单个子任务时长
-- **上下文保护**：抓取内容不进入主 Agent 上下文，主 Agent 只接收摘要，节省 token
-
-**并行 CDP 操作**：每个子 Agent 在当前浏览器实例中，自行创建所需的后台 tab（`/new`），自行操作，任务结束自行关闭（`/close`）。所有子 Agent 共享一个 Chromium 浏览器实例和一个 Proxy，通过不同 targetId 操作不同 tab，无竞态风险。
-
-**子 Agent Prompt 写法：目标导向，而非步骤指令**
-- 必须在子 Agent prompt 中写 `必须加载 web-access skill 并遵循指引`，子 Agent 会自动加载 skill，无需在 prompt 中复制 skill 内容或指定路径。
-- 子 Agent 有自主判断能力。主 Agent 的职责是说清楚**要什么**，仅在必要与确信时限定**怎么做**。过度指定步骤会剥夺子 Agent 的判断空间，反而引入主 Agent 的假设错误。**避免 prompt 用词对子 Agent 行为的暗示**：「搜索xx」会把子 Agent 锚定到 WebSearch，而实际上有些反爬站点需要 CDP 直接访问主站才能有效获取内容。主 Agent 写 prompt 时应描述目标（「获取」「调研」「了解」），避免用暗示具体手段的动词（「搜索」「抓取」「爬取」）。
-
-**分治判断标准：**
-
-| 适合分治 | 不适合分治 |
-|----------|-----------|
-| 目标相互独立，结果互不依赖 | 目标有依赖关系，下一个需要上一个的结果 |
-| 每个子任务量足够大（多页抓取、多轮搜索） | 简单单页查询，分治开销大于收益 |
-| 需要 CDP 浏览器或长时间运行的任务 | 几次 WebSearch / Jina 就能完成的轻量查询 |
+```bash
+curl -s http://localhost:3456/shutdown
+```
 
 ## 信息核实类任务
 

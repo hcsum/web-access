@@ -1,162 +1,346 @@
-<div align="right">
-  <details>
-    <summary>🌐 Language</summary>
-    <div>
-      <div align="center">
-        <a href="https://openaitx.github.io/view.html?user=eze-is&project=web-access&lang=en">English</a>
-        | <a href="https://openaitx.github.io/view.html?user=eze-is&project=web-access&lang=zh-CN">简体中文</a>
-        | <a href="https://openaitx.github.io/view.html?user=eze-is&project=web-access&lang=zh-TW">繁體中文</a>
-        | <a href="https://openaitx.github.io/view.html?user=eze-is&project=web-access&lang=ja">日本語</a>
-        | <a href="https://openaitx.github.io/view.html?user=eze-is&project=web-access&lang=ko">한국어</a>
-        | <a href="https://openaitx.github.io/view.html?user=eze-is&project=web-access&lang=fr">Français</a>
-        | <a href="https://openaitx.github.io/view.html?user=eze-is&project=web-access&lang=de">Deutsch</a>
-        | <a href="https://openaitx.github.io/view.html?user=eze-is&project=web-access&lang=es">Español</a>
-        | <a href="https://openaitx.github.io/view.html?user=eze-is&project=web-access&lang=pt">Português</a>
-        | <a href="https://openaitx.github.io/view.html?user=eze-is&project=web-access&lang=ru">Русский</a>
-      </div>
-    </div>
-  </details>
-</div>
+# web-access
 
-<img width="879" height="376" alt="image" src="https://github.com/user-attachments/assets/a87fd816-a0b5-4264-b01c-9466eae90723" />
+An agent skill for real browser-based web access, built around `SKILL.md`, a local CDP proxy, and a multi-runtime browser layer.
 
-<p align="center">
-  <b>给 AI Agent 装上完整联网能力的 Skill。</b><br/>
-  <a href="https://web-access.eze.is">🌐 官网</a> · <a href="https://mp.weixin.qq.com/s/rps5YVB6TchT9npAaIWKCw">📖 设计详解</a> · <a href="#安装">⚡ 快速安装</a>
-</p>
+This repository is designed for agents that need more than plain search and fetch. It gives them a repeatable way to:
 
-AI Agent 原本的联网能力（WebSearch、WebFetch）缺少调度策略和浏览器自动化能力。这个 Agent Skill 补上的是：**联网策略 + CDP 浏览器操作 + 站点经验积累**。兼容所有支持 SKILL.md 的 Agent（Claude Code、Cursor、Gemini CLI、Codex CLI 等）。
+- choose the right web access path
+- connect to a real logged-in browser session
+- operate a dedicated automation browser
+- fall back to a remote cloud browser runtime
+- reuse site-specific operational knowledge
 
-> 推荐必读：[Web Access：一个 Skill，拉满 Agent 联网和浏览器能力](https://mp.weixin.qq.com/s/rps5YVB6TchT9npAaIWKCw) ，完整介绍了 Web-Access Skill 的开发细节与 Agent Skill 设计哲学，帮助你也能写出类似通用、高上限的 Skill
+## Acknowledgement
 
----
+This repository is a **hard fork** of the original `web-access` project by Eze:
 
-## v2.5.0 能力
+https://github.com/eze-is/web-access
 
-| 能力 | 说明 |
-|------|------|
-| 联网工具自动选择 | WebSearch / WebFetch / curl / Jina / CDP，按场景自主判断，可任意组合 |
-| CDP Proxy 浏览器操作 | 支持主力浏览器或专用浏览器，支持动态页面、交互操作、视频截帧 |
-| 三种点击方式 | `/click`（JS click）、`/clickAt`（CDP 真实鼠标事件）、`/setFiles`（文件上传） |
-| 本地 Chrome 书签/历史检索 | `find-url.mjs` 查询公网搜不到的目标（内部系统）或用户访问过的页面，支持关键词/时间窗/访问频度排序 |
-| 并行分治 | 多目标时分发子 Agent 并行执行，共享一个 Proxy，tab 级隔离 |
-| 站点经验积累 | 按域名存储操作经验（URL 模式、平台特征、已知陷阱），跨 session 复用 |
-| 媒体提取 | 从 DOM 直取图片/视频 URL，或对视频任意时间点截帧分析 |
+It began as a fork of `web-access` but has since diverged substantially in its browser architecture, runtime design, and setup flow, and is now maintained as an independent project rather than as a contribution back to upstream. Full credit for the original work — and for the core idea that a web skill should bundle both browsing capability and durable operating guidance for agents — belongs to the `web-access` authors. This fork keeps that direction while rebuilding the internals for a multi-browser, multi-runtime environment.
 
-**v2.5.0 更新：**
-- **本地 Chrome 资源检索** — 新增 `scripts/find-url.mjs`，从本地 Chrome 书签/历史按关键词/时间窗/访问频度定位 URL。典型场景：用户提到组织内部系统（"我们的 XX 平台"等公网搜不到的目标）、回查之前访问过但不记得地址的页面、查看最近高频访问网站等（场景感谢 @MVPGFC 在 #60 提出）
+## What Is Different From `eze-is/web-access`
 
-<details><summary>v2.4.3 更新</summary>
+This repository is not a drop-in mirror. It is a focused variant with different browser assumptions and a different runtime design.
 
-- **修复 CLAUDE_SKILL_DIR 路径问题** — bash 代码块改用 `${CLAUDE_SKILL_DIR}` 字符串替换语法，修复 Windows Git Bash 路径转换错误和变量未设置问题（#47 #46）
-- **站点经验列表合并到前置检查** — 启动检查通过后自动输出已有站点经验列表，移除不可靠的 `!` 内联注入
-</details>
+### 1. Provider and mode are modeled separately
 
-<details><summary>v2.4.1 更新</summary>
+This repository does not treat `primary`, `dedicated`, and `remote` as three sibling choices.
 
-- **跨平台支持** — 脚本从 bash 迁移到 Node.js，Windows / Linux / macOS 均可使用
-- **DOM 边界穿透** — 新增技术事实：eval 递归遍历可穿透 Shadow DOM、iframe 等选择器不可跨越的边界
-</details>
+Instead, it uses a two-level model:
 
-<details><summary>v2.4 更新</summary>
+- choose a `provider` first
+- choose a `mode` only if the provider is local
 
-- **站点内 URL 可靠性** — 新增事实说明：站点生成的链接自带完整上下文，手动构造的 URL 可能缺失隐式必要参数
-- **平台错误提示不可信** — 新增技术事实：平台返回的"内容不存在"等提示可能是访问方式问题而非内容本身问题
-- **小红书站点经验增强** — xsec_token 机制、创作者平台状态校验、暂存草稿流程
-</details>
+The resulting structure is:
 
-<details><summary>v2.3 更新</summary>
+- `local` provider
+  - `primary` mode
+  - `dedicated` mode
+- `browserbase` provider
+  - remote browser runtime
 
-- **浏览哲学重构** — 更清晰的「像人一样思考」框架，强调目标驱动而非步骤驱动
-- **Jina 积极推荐** — 明确鼓励在合适场景主动使用 Jina 节省 token
-- **子 Agent prompt 指引优化** — 明确加载写法，增加避免动词暗示执行方式的说明
-</details>
+This keeps the mental model aligned with the implementation.
 
-## 安装
+### 2. Primary and dedicated browsers are first-class local modes
 
-**方式一：npx skills 一键安装（推荐）**
+The upstream project is centered on connecting to the user's everyday browser session. This repository explicitly models two local modes:
 
-```bash
-npx skills add eze-is/web-access
+- `primary`: connect to the user's normal browser session and reuse its login state
+- `dedicated`: connect to an isolated browser profile created only for automation
+
+When both are available, this repository prefers `dedicated` by default and only switches to `primary` when the task actually depends on the user's main-session state.
+
+### 3. Multi-browser local discovery instead of a single preferred browser path
+
+This repository can discover and use multiple Chromium-family browsers through stable `browser-id` values:
+
+- `chrome`
+- `chrome-canary`
+- `chromium`
+- `brave`
+- `edge`
+- `arc`
+
+Dedicated browser profiles are normalized to:
+
+```text
+$HOME/.web-access/<browser-id>-dedicated-profile
 ```
 
-> [skills CLI](https://github.com/vercel-labs/skills) 是开源的 Agent Skill 包管理器，自动检测你的 Agent 环境并安装到正确位置。
+That makes setup and troubleshooting more predictable across machines.
 
-**方式二：让 Agent 自动安装**
+### 4. Availability is decided from live state, not remembered preference
 
+This version intentionally does not persist a browser preference file. It checks live availability at runtime by inspecting `DevToolsActivePort` and current connectivity, then returns a structured result.
+
+This is a deliberate design choice:
+
+- fewer hidden state bugs
+- fewer stale preference issues
+- easier reasoning for the agent
+- easier debugging for humans
+
+### 5. A provider abstraction is built into the runtime layer
+
+This repository separates browser access into providers:
+
+- local CDP browser access
+- Browserbase cloud browser access
+
+The agent-facing API stays the same across providers, so the skill can keep one operational model while swapping runtimes underneath.
+
+### 6. Preflight is machine-readable first
+
+`check-deps.mjs` returns structured JSON, not only human-oriented text. The skill instructions are written to consume fields such as:
+
+- `ok`
+- `provider`
+- `selectedMode`
+- `availableModes`
+- `selectedBecause`
+- `browserId`
+- `proxyReady`
+
+That makes the preflight step suitable for autonomous agent decisions instead of forcing the agent to parse ad hoc logs.
+
+### 7. The repository is slimmer and more runtime-oriented
+
+Compared with the upstream repository, this version is organized more directly around the runtime implementation:
+
+- browser detection
+- runtime selection
+- proxy lifecycle
+- site-pattern references
+
+It is less focused on packaging layers and more focused on the browser execution path itself.
+
+## Repository Structure
+
+```text
+.
+├── SKILL.md
+├── scripts
+│   ├── check-deps.mjs
+│   ├── cdp-proxy.mjs
+│   ├── find-url.mjs
+│   ├── match-site.mjs
+│   └── browser-runtime
+│       ├── index.mjs
+│       ├── cdp-runtime.mjs
+│       ├── playwright-runtime.mjs
+│       ├── provider-resolver.mjs
+│       └── providers
+│           ├── local.mjs
+│           └── browserbase.mjs
+└── references
+    ├── cdp-api.md
+    └── site-patterns
+        ├── ahrefs.com.md
+        ├── ftchinese.com.md
+        └── xiaohongshu.com.md
 ```
-帮我安装这个 skill：https://github.com/eze-is/web-access
-```
 
-**方式三：Plugin 安装（Claude Code）**
+## Browser Access Model
 
-```bash
-claude plugin marketplace add https://github.com/eze-is/web-access
-claude plugin install web-access@web-access --scope user
-```
+The browser structure in this repository is:
 
-**方式四：手动**
+- `provider`
+  - `local`
+  - `browserbase`
+- `mode`
+  - `primary` for local browser reuse
+  - `dedicated` for local isolated automation
 
-```bash
-git clone https://github.com/eze-is/web-access ~/.claude/skills/web-access
-```
+`browserbase` is a remote provider, not a third local mode.
 
-## 前置配置（CDP 模式）
+This distinction matters because the selection logic, runtime creation, and switching behavior all follow it.
 
-CDP 模式需要 **Node.js 22+** 和浏览器开启远程调试。
+## Selection Rules
 
-先决定用哪种浏览器模式，再进入对应配置。先看最关键差异：
+The runtime is selected in this order:
 
-- 主力浏览器：可能需要人工确认远程调试授权
-- 专用浏览器：配置完成后日常运行通常不需要人工确认 debug access
+1. Choose the provider.
+2. If the provider is `local`, choose the mode.
+3. Start or reuse the proxy for that exact runtime choice.
 
-再看完整取舍：
+In practical terms:
 
-| 模式 | 适合场景 | 主要优势 | 主要代价 |
-|------|----------|----------|----------|
-| 主力浏览器 | 希望立刻复用日常浏览器状态 | 自动继承现有登录态、书签、插件 | 可能需要人工确认远程调试授权；Agent 操作和用户自己的浏览器操作不隔离 |
-| 专用浏览器 | 需要长期、稳定、低打扰自动化 | 配置完成后通常不需要人工确认调试授权；与日常浏览完全隔离 | 首次配置时需要单独登录常用网站、安装常用插件、同步书签 |
+- if Browserbase credentials are configured, the provider is `browserbase`
+- otherwise the provider is `local`
+- within `local`, explicit mode requests win
+- if no local mode is explicitly requested, the runtime checks live availability
+- when both local modes are available, `dedicated` is preferred
 
-专用浏览器的重点不是省掉首次配置，而是让**配置完成后的日常运行**更稳定，减少人工确认调试授权的中断。
+This is why the repository talks about `provider` and `mode` separately instead of flattening everything into one list of browser types.
 
-如果是 Agent 在向用户发起模式选择，不应只给“1 / 2”两个编号。应先明确“是否需要人工确认调试授权”的差异，再补充收益和代价，让用户按场景选择：
+## Switching Behavior
 
-- 需要立刻复用现有登录态、马上完成一次任务：通常选 `主力浏览器`
-- 需要把 Agent 操作和日常使用隔离开、希望长期稳定复用同一套环境：通常选 `专用浏览器`
+Runtime switching is explicit.
 
-在发起模式询问前，建议先跑一次自动检查：
+- switching between `primary` and `dedicated` is a local-mode switch
+- switching between `local` and `browserbase` is a provider switch
+- any switch recreates the active runtime behind the proxy
+- after a switch, old target IDs should be treated as invalid
 
-```bash
-node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"
-```
+The proxy is therefore stable as an interface, but not as a promise that browser state identifiers survive a runtime change.
 
-自动检查会基于 `DevToolsActivePort` 判断当前可用连接：
+## How The Pieces Fit Together
 
-- 任一模式可用：直接返回 ok
-- 主力与专用都可用：默认选择专用浏览器
-- 都不可用：再进入用户询问流程
+### `SKILL.md`
 
-### 主力浏览器
+The operational manual for the agent.
 
-1. 在 Chromium 系浏览器地址栏打开 `chrome://inspect/#remote-debugging`
-2. 勾选 **Allow remote debugging for this browser instance**（可能需要重启浏览器）
+It does not just list commands. It tells the agent:
 
-### 专用浏览器
+- when to run preflight
+- when to ask the user for browser intervention
+- when to use `primary` versus `dedicated`
+- how to reason about page interaction
+- how to use site-pattern references
 
-先选定一个稳定的 `browser-id`：
+### `scripts/check-deps.mjs`
 
-| browser-id | 浏览器 App 名称 |
-|---|---|
-| `chrome` | `Google Chrome` |
-| `chrome-canary` | `Google Chrome Canary` |
-| `chromium` | `Chromium` |
-| `brave` | `Brave Browser` |
-| `edge` | `Microsoft Edge` |
-| `arc` | `Arc` |
+The entry point for environment detection.
 
-对应的专用 profile 目录固定为：`$HOME/.web-access/<browser-id>-dedicated-profile`
+Its job is to:
 
-macOS 启动命令示例：
+- validate runtime requirements
+- resolve the browser provider
+- detect available local browser modes
+- start or reuse the proxy
+- return a machine-readable status object
+
+This is the script an agent should run first.
+
+### `scripts/cdp-proxy.mjs`
+
+The stable HTTP bridge exposed to the agent.
+
+Instead of forcing the agent to manage raw WebSocket CDP traffic, the proxy exposes a smaller HTTP API for:
+
+- listing targets
+- opening tabs
+- navigation
+- evaluation
+- clicking
+- scrolling
+- screenshots
+- file uploads
+
+The proxy keeps the browser-specific complexity behind one consistent interface.
+
+### `scripts/browser-runtime/*`
+
+The runtime abstraction layer.
+
+This folder exists so the rest of the skill can think in terms of browser actions instead of provider-specific wiring.
+
+- `index.mjs`: resolves runtime availability and constructs the active runtime
+- `provider-resolver.mjs`: parses environment configuration into a runtime choice
+- `providers/local.mjs`: finds local browser instances from `DevToolsActivePort`
+- `providers/browserbase.mjs`: creates and releases Browserbase sessions
+- `cdp-runtime.mjs`: local runtime backed by raw CDP over WebSocket
+- `playwright-runtime.mjs`: cloud runtime backed by Playwright over Browserbase CDP
+
+### `scripts/find-url.mjs`
+
+Local bookmark and history lookup.
+
+This is useful when the target is not easily discoverable from public search, for example:
+
+- internal systems
+- admin dashboards
+- previously visited pages
+- a site the user remembers by topic but not by URL
+
+### `scripts/match-site.mjs`
+
+A lightweight matcher that loads domain-specific notes from `references/site-patterns/`.
+
+It lets the skill inject known platform facts without hardcoding site behavior into the main instructions or the runtime code.
+
+### `references/site-patterns/*`
+
+Durable knowledge files for specific sites.
+
+These files are intentionally data-like rather than code-like. They hold:
+
+- URL patterns
+- success signals
+- common traps
+- domain-specific workflow notes
+
+That keeps site knowledge editable without changing runtime logic.
+
+## Design Decisions
+
+### Machine-readable preflight over informal logs
+
+The first decision point in browser automation is not "what page should I open?" but "what browser path is actually available right now?"
+
+That is why preflight returns structured JSON. The agent can make reliable branching decisions without guessing from free-form output.
+
+### Dedicated browser by default when possible
+
+A dedicated profile is usually better for long-running automation:
+
+- fewer permission interruptions
+- less interference with the user's normal browsing
+- a stable place to keep automation-only logins and extensions
+
+This repository therefore prefers `dedicated` when both local modes are available.
+
+### Explicit user intervention only when needed
+
+If preflight succeeds, the agent should continue without asking the user to choose a mode again. If preflight fails, the instructions require the agent to explain the actual tradeoff before asking for help.
+
+This keeps the system autonomous when it can be, and explicit when it must be.
+
+### Local browsers use direct CDP; cloud browsers use Playwright
+
+For local browsers, raw CDP keeps the stack thinner and preserves direct access to the user's actual browser session.
+
+For Browserbase, Playwright is a practical adapter because session lifecycle and page management are cleaner in a cloud context.
+
+The result is a shared action surface with different internals where that is appropriate.
+
+### Site knowledge stays outside the runtime
+
+A browser runtime should know how to operate pages. It should not contain per-site business logic.
+
+This repository keeps platform-specific knowledge in `references/site-patterns/` so it can evolve independently from the automation engine.
+
+### One proxy, one active browser binding
+
+The proxy is intentionally global and bound to one runtime at a time. Switching between `primary`, `dedicated`, or `browserbase` is treated as a runtime switch, not as an incidental flag flip.
+
+This makes the model easier to reason about:
+
+- one proxy process
+- one active browser target space
+- explicit mode switching
+- predictable invalidation of old target IDs after a switch
+
+## Requirements
+
+- Node.js 22+ recommended
+- a Chromium-based browser for local mode, or Browserbase credentials for cloud mode
+- permission to enable remote debugging when using local `primary` mode
+
+## Local Provider Setup
+
+### Primary mode
+
+Open the browser's remote debugging page and enable remote debugging for that browser instance.
+
+Examples:
+
+- Chrome: `chrome://inspect/#remote-debugging`
+- Edge: `edge://inspect/#remote-debugging`
+
+### Dedicated mode
+
+Start a separate Chromium-family browser instance with a stable profile directory:
 
 ```bash
 open -na "Brave Browser" --args \
@@ -164,61 +348,103 @@ open -na "Brave Browser" --args \
   --user-data-dir="$HOME/.web-access/brave-dedicated-profile"
 ```
 
-专用浏览器启动后，可以显式运行 dedicated 检查命令：
+Then run:
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs" --browser dedicated --browser-id brave
-# $CLAUDE_SKILL_DIR 是 skill 加载时自动设置的环境变量
+node ./scripts/check-deps.mjs --browser dedicated --browser-id brave
 ```
 
-默认检查命令 `node "${CLAUDE_SKILL_DIR}/scripts/check-deps.mjs"` 会自动检查主力和专用 profile。已经明确进入专用浏览器路径时，后续检查和连接建议继续带上 `--browser dedicated --browser-id ...`，保持路径一致。
+## Remote Provider Support
 
-## CDP Proxy API
+Yes. This repository supports a remote browser runtime through Browserbase.
 
-Proxy 通过 WebSocket 直连浏览器，提供 HTTP API：
+That means the skill is not limited to a browser running on the same machine. If Browserbase credentials are present, the runtime layer can create a cloud browser session and expose it through the same proxy API used by local browser modes.
+
+### When the remote provider is useful
+
+- the agent is running in a container or remote environment without reliable access to a local browser
+- you want browser isolation without managing a dedicated local profile
+- you want a fallback when local CDP access is unavailable
+- you want the same agent workflow to run on another machine or CI-like environment
+
+### How the remote provider is selected
+
+The remote provider is selected when Browserbase credentials are available in the environment.
+
+Expected environment variables:
 
 ```bash
-# 启动（Agent 会自动管理 Proxy 生命周期，无需手动启动）
-node "${CLAUDE_SKILL_DIR}/scripts/cdp-proxy.mjs" &
-
-# 页面操作
-curl -s "http://localhost:3456/new?url=https://example.com"     # 新建 tab
-curl -s -X POST "http://localhost:3456/eval?target=ID" -d 'document.title'  # 执行 JS
-curl -s -X POST "http://localhost:3456/click?target=ID" -d 'button.submit'  # JS 点击
-curl -s -X POST "http://localhost:3456/clickAt?target=ID" -d '.upload-btn'  # 真实鼠标点击
-curl -s -X POST "http://localhost:3456/setFiles?target=ID" \
-  -d '{"selector":"input[type=file]","files":["/path/to/file.png"]}'        # 文件上传
-curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png"     # 截图
-curl -s "http://localhost:3456/scroll?target=ID&direction=bottom"           # 滚动
-curl -s "http://localhost:3456/close?target=ID"                             # 关闭 tab
+BROWSERBASE_API_KEY=...
+BROWSERBASE_PROJECT_ID=...
 ```
 
-## ⚠️ 使用前提醒
+Optional variables supported by the runtime layer include:
 
-通过浏览器自动化操作社交平台（如小红书）存在账号被平台限流或封禁的风险。**强烈建议使用小号进行操作。**
+```bash
+BROWSERBASE_CONTEXT_ID=...
+BROWSERBASE_CONTEXT_PERSIST=true
+BROWSERBASE_USE_PROXY=true
+BROWSERBASE_SOLVE_CAPTCHA=true
+BROWSERBASE_VERIFIED=true
+BROWSERBASE_REGION=...
+BROWSERBASE_SESSION_TIMEOUT_SEC=600
+```
 
-## 使用
+Then run the usual preflight:
 
-安装后直接让 Agent 执行联网任务，skill 自动接管：
+```bash
+node ./scripts/check-deps.mjs
+```
 
-- "帮我搜索 xxx 最新进展"
-- "读一下这个页面：[URL]"
-- "去小红书搜索 xxx 的账号"
-- "帮我在创作者平台发一篇图文"
-- "同时调研这 5 个产品的官网，给我对比摘要"
+If the remote provider is active, the returned JSON will report:
 
-## 设计哲学
+- `provider: "browserbase"`
+- `selectedMode: "browserbase"`
 
-> Skill = 哲学 + 技术事实，不是操作手册。讲清 tradeoff 让 AI 自己选，不替它推理。
+### Why the remote provider is implemented this way
 
-详见 [SKILL.md](./SKILL.md) 中的浏览哲学部分。
+Remote browser support is intentionally implemented as a provider, not as a separate skill.
+
+That design keeps these parts stable:
+
+- the preflight entrypoint
+- the proxy API
+- the agent workflow
+- the site-pattern knowledge layer
+
+Only the runtime backend changes.
+
+## Quick Start
+
+Clone the repository into the skill directory used by your agent environment, then run:
+
+```bash
+node ./scripts/check-deps.mjs
+```
+
+If the returned JSON says `ok: true`, the agent can continue and use the proxy-backed browser workflow.
+
+## Why This Repository Exists
+
+The upstream project is already useful. This repository exists because the browser problem changed:
+
+- agents often need isolated automation profiles, not only the user's daily browser
+- teams may use different Chromium-family browsers on different machines
+- cloud browser fallback is increasingly practical
+- autonomous agents benefit from structured runtime decisions, not prose-only setup output
+
+So this repository narrows its focus to one goal: make browser availability, browser selection, and browser control easier for an agent to reason about.
+
+## Installation
+
+Clone this repository into the skill directory used by your agent environment.
+
+Example:
+
+```bash
+git clone https://github.com/hcsum/web-access ~/.claude/skills/web-access
+```
 
 ## License
 
-MIT · 作者：[一泽 Eze](https://github.com/eze-is) · [官网](https://web-access.eze.is)
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=eze-is/web-access&type=Date)](https://star-history.com/#eze-is/web-access&Date)
-
-<img width="1280" height="306" alt="image" src="https://github.com/user-attachments/assets/2afa25c2-3730-413e-b40f-94e52567249d" />
+MIT
