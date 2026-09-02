@@ -1,6 +1,6 @@
 ---
 name: web-access
-description: Use only when a task needs a live browser session: opening or controlling pages, reusing logged-in state, interacting with UI (clicks, scrolling, forms, uploads), reading JavaScript-rendered content, taking screenshots, or searching local browser history/bookmarks. Do not use for plain HTTP requests, static URL fetching, or search/research tasks that do not require browser state or interaction.
+description: Use when a task needs a live browser session: opening or controlling pages, reusing logged-in state, interacting with UI (clicks, scrolling, forms, uploads), reading JavaScript-rendered content, taking screenshots, searching local browser history/bookmarks, or researching sites that typically require real browsing such as Reddit, X, social platforms, logged-in apps, dynamic pages, or anti-bot-heavy sites. Do not use for plain HTTP requests or static URL fetching on sites known to work reliably without a browser.
 ---
 
 # web-access
