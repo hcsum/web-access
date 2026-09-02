@@ -1,78 +1,41 @@
 # web-access
 
-An agent skill for driving a real browser to access the web — searching, reading pages behind logins, filling forms, clicking through UIs, and pulling text or media straight from the DOM. It pairs an operating manual (`SKILL.md`) with a small local proxy and a browser-runtime layer, so an agent can pick a browser, connect to it, and operate pages through one stable HTTP interface.
+一个极简 agent skill：当静态 fetch 不够用时，用它控制真实浏览器，比如登录后页面、动态 UI、点击/表单、截图、文件上传、浏览器历史/书签检索。
 
-It's meant for the cases where plain "search and fetch" falls short: logged-in sessions, JavaScript-heavy pages, lazy-loaded content, internal dashboards, and anything that needs real interaction rather than a static GET.
+## 浏览器模式
 
-## Credit
+主要亮点是模式切换。Agent 可以按任务选择浏览器模式，同时继续使用同一套 proxy API。
 
-This project began as a fork of [eze-is/web-access](https://github.com/eze-is/web-access) and owes its core idea — bundling browsing capability together with durable operating guidance for agents — to that work. The internals here have since been rebuilt around a multi-browser, multi-runtime design.
+- `primary`：连接用户当前主力 Chromium 浏览器。可以接管已有页面，并无缝复用登录态、cookie、插件和书签。可能偶发需要用户确认 debug access。
+- `dedicated`：连接独立 Chromium profile。通常可以规避反复 debug 确认，也能把自动化和日常浏览隔离开；但这个 profile 需要单独配置登录态、插件和书签。
+- `browserbase`：通过环境变量启用远端浏览器。适合服务器、CI、或没有可用本地 GUI 浏览器的 agent 环境。
 
-## How it works
+切换模式会重建 proxy 后面的 runtime，因此旧 `targetId` 应视为失效。
 
-Three pieces carry most of the weight:
+## 工作机制
 
-- **`SKILL.md`** — the manual the agent reads. It covers when to run preflight, when to ask the user to step in, when to prefer one browser over another, and how to reason about navigating a page. (Written in Chinese.)
-- **`scripts/check-deps.mjs`** — preflight. It checks Node, works out which browser provider and mode are available from live state, starts or reuses the proxy, and prints a machine-readable JSON status the agent branches on (`ok`, `provider`, `selectedMode`, `availableModes`, `proxyReady`, …).
-- **`scripts/cdp-proxy.mjs`** — a small HTTP server (default `localhost:3456`) that hides raw CDP/WebSocket traffic behind plain `curl`-able endpoints: list targets, open tabs, navigate, evaluate JS, click, scroll, screenshot, upload files, and shut down.
+- `SKILL.md`：告诉 agent 什么时候需要真实浏览器，以及如何选择模式。
+- `scripts/check-deps.mjs`：检测可用浏览器 runtime，并启动或复用 proxy。
+- `scripts/cdp-proxy.mjs`：把浏览器操作暴露成 `localhost:3456` 上的 HTTP endpoint。
+- `scripts/find-url.mjs`：检索本地浏览器历史/书签。
+- `references/cdp-api.md`：少见 proxy 操作的详细说明。
 
-### Browser model: provider, then mode
+## 基本流程
 
-Browsers are organized in two levels rather than one flat list:
-
-- **`local`** — a Chromium-family browser on this machine, driven over direct CDP
-  - **`primary`** mode: connect to your everyday browser and reuse its existing logins
-  - **`dedicated`** mode: connect to an isolated, automation-only profile
-- **`browserbase`** — a remote cloud browser, driven through Playwright
-
-When both local modes are available, `dedicated` is preferred; the skill only reaches for `primary` when a task actually needs your main session's state. Availability is decided from live signals (`DevToolsActivePort` and current connectivity) rather than a remembered preference file, which keeps fewer stale-state surprises around and makes debugging easier.
-
-Switching between modes or providers recreates the runtime behind the proxy. The proxy stays put as an interface, but target IDs obtained before a switch should be treated as stale afterward.
-
-## Components
-
-```text
-.
-├── SKILL.md
-├── package.json
-├── scripts
-│   ├── check-deps.mjs
-│   ├── cdp-proxy.mjs
-│   ├── find-url.mjs
-│   ├── match-site.mjs
-│   └── browser-runtime
-│       ├── index.mjs
-│       ├── cdp-runtime.mjs
-│       ├── playwright-runtime.mjs
-│       ├── provider-resolver.mjs
-│       └── providers
-│           ├── local.mjs
-│           └── browserbase.mjs
-└── references
-    ├── cdp-api.md
-    └── site-patterns
-        ├── ahrefs.com.md
-        ├── ftchinese.com.md
-        └── xiaohongshu.com.md
+```bash
+node ./scripts/check-deps.mjs
 ```
 
-- **`scripts/browser-runtime/`** — the runtime layer, so the rest of the skill thinks in browser actions instead of provider-specific wiring. `index.mjs` resolves availability and constructs the active runtime; `provider-resolver.mjs` turns environment config into a runtime choice; `providers/local.mjs` discovers local browsers via `DevToolsActivePort`; `providers/browserbase.mjs` creates and releases cloud sessions; `cdp-runtime.mjs` is the local runtime over raw CDP; `playwright-runtime.mjs` is the cloud runtime over Browserbase.
-- **`scripts/find-url.mjs`** — looks up local Chrome bookmarks and history, for when the target isn't easy to find through public search (internal systems, admin panels, a page the user remembers by topic but not URL).
-- **`scripts/match-site.mjs`** — loads domain-specific notes from `references/site-patterns/` so known platform facts can be injected without hardcoding site behavior into the runtime.
-- **`references/site-patterns/*`** — durable, data-like knowledge files per domain: URL patterns, success signals, common traps, and workflow notes. Editable without touching runtime code.
+如果返回 `ok: true`，proxy 已可用。如果返回 `ok: false`，按输出里的 guidance 让浏览器变为可用。
 
-## Setup
+显式指定本地模式：
 
-### Local — primary mode
+```bash
+node ./scripts/check-deps.mjs --browser primary
+node ./scripts/check-deps.mjs --browser dedicated --browser-id brave
+```
 
-Enable remote debugging in your everyday browser, then run preflight:
-
-- Chrome: `chrome://inspect/#remote-debugging`
-- Edge: `edge://inspect/#remote-debugging`
-
-### Local — dedicated mode
-
-Launch an isolated profile with a debugging port:
+启动专用 profile：
 
 ```bash
 open -na "Brave Browser" --args \
@@ -80,72 +43,20 @@ open -na "Brave Browser" --args \
   --user-data-dir="$HOME/.web-access/brave-dedicated-profile"
 ```
 
-Recognized browser ids: `chrome`, `chrome-canary`, `chromium`, `brave`, `edge`, `arc`. Then:
+支持的 browser id：`chrome`、`chrome-canary`、`chromium`、`brave`、`edge`、`arc`。
 
-```bash
-node ./scripts/check-deps.mjs --browser dedicated --browser-id brave
-```
+## 远端浏览器
 
-### Remote — Browserbase
-
-Set credentials and the runtime will create a cloud session, exposed through the same proxy API as local modes:
+设置 Browserbase 环境变量即可启用远端 runtime：
 
 ```bash
 BROWSERBASE_API_KEY=...
 BROWSERBASE_PROJECT_ID=...
 ```
 
-Optional variables the runtime honors:
+可选变量包括 `BROWSERBASE_CONTEXT_ID`、`BROWSERBASE_CONTEXT_PERSIST`、`BROWSERBASE_USE_PROXY`、`BROWSERBASE_SOLVE_CAPTCHA`、`BROWSERBASE_VERIFIED`、`BROWSERBASE_REGION`、`BROWSERBASE_SESSION_TIMEOUT_SEC`。
 
-```bash
-BROWSERBASE_CONTEXT_ID=...
-BROWSERBASE_CONTEXT_PERSIST=true
-BROWSERBASE_USE_PROXY=true
-BROWSERBASE_SOLVE_CAPTCHA=true
-BROWSERBASE_VERIFIED=true
-BROWSERBASE_REGION=...
-BROWSERBASE_SESSION_TIMEOUT_SEC=600
-```
+## 要求
 
-Run the usual preflight; when the cloud provider is active the JSON reports `provider: "browserbase"` and `selectedMode: "browserbase"`. This is the path to use when there's no reliable local browser — containers, CI, remote hosts — or when you want isolation without managing a local profile.
-
-## Quick start
-
-Ask your agent to install this skill. It can do that itself — clone the repo into the skills directory and run preflight:
-
-```bash
-git clone https://github.com/hcsum/web-access ~/.claude/skills/web-access
-node ~/.claude/skills/web-access/scripts/check-deps.mjs
-```
-
-(If the agent doesn't pick up the new skill right away, reload its session so the skill directory is rescanned.)
-
-When preflight returns `ok: true`, the agent can drive the browser through the proxy. There's one step it **can't** do for you: a CDP-accessible browser has to exist first. Preflight detects browsers — it doesn't create them — so if it reports `ok: false` with no browser available, make one available and re-run it:
-
-- **enable remote debugging** in your everyday browser → `primary` mode
-- **launch a dedicated automation profile** → `dedicated` mode
-- **set Browserbase credentials** → `browserbase` provider (the right choice for headless or remote agent environments)
-
-See [Setup](#setup) for each. Once a browser is reachable, re-running preflight gives `ok: true` and the agent is ready.
-
-## Dependencies
-
-Local browsers use direct CDP and need **no `npm install`** — clone and go.
-
-Only the Browserbase cloud provider needs `playwright-core`. It's declared as an optional dependency and loaded lazily, on the cloud path only. If you plan to use cloud mode, install once in the skill root:
-
-```bash
-cd ~/.claude/skills/web-access && npm install
-```
-
-Start a cloud session without it and the runtime fails fast with a `PLAYWRIGHT_CORE_MISSING` error that names exactly what to install.
-
-## Requirements
-
-- Node.js 22+ (uses native WebSocket; older versions work with the `ws` module installed)
-- a Chromium-based browser for local mode, or Browserbase credentials for cloud mode
-- permission to enable remote debugging when using local `primary` mode
-
-## License
-
-MIT
+- Node.js 22+
+- 本地模式需要 Chromium 系浏览器；远端模式需要 Browserbase credentials
