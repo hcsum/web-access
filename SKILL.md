@@ -1,6 +1,6 @@
 ---
 name: web-access
-description: 仅当任务需要控制真实浏览器会话时使用：打开页面、复用登录态、点击、滚动、填写表单、读取动态页面、截图、上传文件，或检索浏览器历史/书签。普通 HTTP 抓取、静态 URL 读取、一般网页调研不要使用，除非真实浏览器是必要条件。
+description: Use only when a task needs a live browser session: opening or controlling pages, reusing logged-in state, interacting with UI (clicks, scrolling, forms, uploads), reading JavaScript-rendered content, taking screenshots, or searching local browser history/bookmarks. Do not use for plain HTTP requests, static URL fetching, or search/research tasks that do not require browser state or interaction.
 ---
 
 # web-access
